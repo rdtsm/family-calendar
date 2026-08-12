@@ -346,7 +346,7 @@ Notifications require HTTPS on both platforms — a deployment satisfies this, a
 ## Known limitations
 
 - **No edit.** Changing an event means deleting and re-adding it. Delete already handles the harder
-  case (one occurrence versus the whole series); edit is roadmap.
+  case (one occurrence versus the whole series); deliberate choice for simplicity.
 - **One timezone for the whole family.** Correct for a household, wrong for a child at boarding
   school abroad.
 - **Weekly recurrence only, one weekday at a time.** "Tuesdays and Thursdays" is two entries. There
@@ -358,7 +358,7 @@ Notifications require HTTPS on both platforms — a deployment satisfies this, a
   a change today.
 - **An adult who is not a parent has to be given the family PIN** to open their subscribe page,
   which also unlocks the admin app. Fine for two parents; wrong for a nanny.
-- **No edit for who is on an activity.** Adding or removing a person means deleting and re-adding.
+- **No edit for who is on an activity.** Adding or removing a person means deleting and re-adding. 
 - **The kid's link is a bearer token.** Anyone holding it sees that child's schedule, and can add
   entries to it — which appear on the child's screen and nowhere else, so nobody but the child would
   see something they did not add. The dashboard warns when a new device opens a link,
@@ -384,7 +384,7 @@ Notifications require HTTPS on both platforms — a deployment satisfies this, a
   The fix is to restrict Chrome by *place* rather than by *time* — set it to only allow approved
   sites, approve this domain, and remove the Chrome time limit, which is stricter than a time limit
   rather than looser. Alternatives and their costs are in
-  [the project doc](docs/project.md#512-android-family-link-and-the-chrome-dependency).
+  [the project doc](docs/project.md#511-android-family-link-and-the-chrome-dependency).
 - **Reminders require the app to be installed, and on iPhone there is no way around it.** Web push
   does not exist in a Safari tab, so a child browsing to their link can never be reminded. The app
   says so and offers the install route, but it cannot do it for them.
@@ -395,30 +395,18 @@ Notifications require HTTPS on both platforms — a deployment satisfies this, a
 
 ## Roadmap
 
-- [ ] Self-healing lead window — track the last successful run so a missed ping degrades to a late
-      reminder rather than none
 - [ ] [One-click install](docs/project.md#8-reaching-households-without-a-developer) — self-provisioning
       first run, so no terminal and no environment variables
 - [ ] Voice entry: *"Beatrix boxing 3 to 4 the next four Tuesdays"* → parsed event
-- [ ] [Side-by-side household view](docs/project.md#58-deferred-side-by-side-household-view)
-- [ ] [Collapse a weekly run into one agenda row](docs/project.md#59-deferred-collapsing-a-weekly-run-into-one-agenda-row) that expands on tap
-- [ ] Edit an existing event (today: delete and re-add)
-- [ ] Repeat on several weekdays in one entry (Tue **and** Thu)
+- [ ] [Collapse a weekly run into one agenda row](docs/project.md#58-deferred-collapsing-a-weekly-run-into-one-agenda-row) that expands on tap
 - [ ] Notify a parent — an activity ticked off, or one that passed untouched. Needs a second
       subscriber type, since push subscriptions are currently keyed to a child
 - [ ] Let a kid signal "I'm running late" back to the parent
-- [ ] A per-person subscribe code, so a nanny or grandparent never needs the family PIN, which also
-      unlocks the admin app
-- [ ] Give children a subscribe feed too, so their week appears in a parent's own calendar app
 - [ ] A native Android wrapper (Capacitor over System WebView) to sever the Chrome dependency —
       note this needs a second, native push path, since System WebView has no Web Push API
-- [ ] Replace the native time input with a 24-hour quick-time strip (chips at 30-minute steps): the
-      browser decides whether `<input type="time">` shows AM/PM and the page cannot override it, so
-      the form asks in 12-hour while everything else displays 24-hour
 - [ ] Sanity-check implausible times when adding — an AM/PM slip on the end time silently creates a
       13-hour event, because an end at or before the start is read as running past midnight
 - [ ] Import the school calendar via ICS
-- [ ] Snooze or mute a specific reminder
 
 ## Stack
 

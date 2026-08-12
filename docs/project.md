@@ -491,38 +491,7 @@ Coverage is summarised in the [README](../README.md#platform-support). The parts
 - Deleting a home-screen app drops its push subscription silently on both platforms; the kid re-taps
   🔔 to restore it.
 
-### 5.8 Deferred: side-by-side household view
-
-**What it is.** A parent-facing view showing every child's day in parallel columns against one shared
-time axis, so school runs, overlaps and gaps are visible at a glance rather than inferred from a
-chronological list.
-
-```
-        Beatrix            Rex
- 15:00  ┌──────────┐
-        │ 🥊Boxing │       ┌──────────┐
- 16:00  └──────────┘       │ ⚽Football│
-                           └──────────┘
- 17:00  ┌──────────┐
-        │ 🎹Piano  │            —
- 18:00  └──────────┘
-```
-
-**Why it was deferred.** It was cut from the MVP as a scope decision, not a technical one. The
-agenda already answers *"what is happening today"* — grouped by day, filterable per child — which
-covers the common case. The parallel view answers a different and rarer question: *"can I be in two
-places at once."* That is worth building, but it was not worth delaying the first deployment.
-
-**What it would take.** No backend work at all. `allEventsInRange` already returns every child's
-events for a window, and the parent page already loads them. It is one client component: group by
-child, lay out on a shared vertical time axis, and highlight rows where two children's intervals
-overlap. The honest cost is UI surface — a second view mode needs a switch, and columns need a
-sensible answer for a household with four children on a phone-width screen. That answer (horizontal
-scroll with a sticky time gutter, or two columns at a time) is the actual design work.
-
-**Where it sits.** Second item on the [roadmap](../README.md#roadmap), behind voice entry.
-
-### 5.9 Deferred: collapsing a weekly run into one agenda row
+### 5.8 Deferred: collapsing a weekly run into one agenda row
 
 **What it is.** A parent-facing alternative to grouping the agenda purely by day. Because the agenda
 groups by day, an open-ended weekly activity necessarily appears once per week — five rows inside
@@ -563,7 +532,7 @@ events, and `Agenda.tsx` needs a second grouping and an expand/collapse — roug
 **Where it sits.** On the [roadmap](../README.md#roadmap), below the views that answer questions the
 agenda cannot answer at all.
 
-### 5.10 Roles, shared activities and subscribe feeds
+### 5.9 Roles, shared activities and subscribe feeds
 
 **Three roles.** A **child** uses the web app and gets push reminders. A **participant** is picked
 when an activity is added and subscribes to a feed of just those. An **observer** is never picked —
@@ -648,7 +617,7 @@ return 401 and the calendar would silently never sync. So the endpoint is `noind
 changes both tokens together, because rotating only the share link would leave a leaked feed still
 syncing into somebody's calendar.
 
-### 5.11 A year in the agenda
+### 5.10 A year in the agenda
 
 The parent agenda loads a full year, matching how far a weekly repeat is materialised, and reveals
 it five weeks at a time. Measured with six weekly series across three children — 312 events, a
@@ -663,7 +632,7 @@ So no second round trip is needed: the data is small once compressed, and it is 
 had to be chunked, not the loading. Each "Show more" reveals the next five weeks from data already
 in the page, so it is instant and cannot fail.
 
-### 5.12 Android, Family Link and the Chrome dependency
+### 5.11 Android, Family Link and the Chrome dependency
 
 **The constraint.** A home-screen web app on Android is a *WebAPK*. It gets its own icon, its own
 name and its own entry in Family Link — but it renders through Chrome. So a Chrome time limit takes
@@ -709,7 +678,7 @@ roadmap, and the allowlist is the answer.
 **iOS is unaffected.** A home-screen web app there is backed by WebKit, which is the system engine
 rather than an app, so Screen Time controls it as its own thing.
 
-### 5.13 Getting the app onto the phone
+### 5.12 Getting the app onto the phone
 
 **Reminders need the app installed, and on iPhone that is absolute.** `PushManager` does not exist
 in a Safari tab: web push is available only once the calendar is on the Home Screen. So a child
@@ -747,7 +716,7 @@ moment, leaving only a faint background tint to distinguish on from off. A tick 
 disappears is indistinguishable from nothing having happened, so re-tapping felt like failure. The
 bell now carries a small permanent tick badge while reminders are on.
 
-### 5.14 Offline, read-only
+### 5.13 Offline, read-only
 
 **Why it is small.** The child's page already carries a month of events in the document, so one
 cached response covers everything they can scroll to.
@@ -821,7 +790,7 @@ Deliberately not adopted: Workbox, which would add a dependency to replace eight
 written and understood, and Navigation Preload, which saves 50–200 ms of worker boot and is worth
 having only when something else brings us back into this file.
 
-### 5.15 A child's own entries, and who has opened their link
+### 5.14 A child's own entries, and who has opened their link
 
 **What a child can add.** One topic and one time, on the day they are looking at. No end time, no
 repeat, no location, nobody else on it: an hour is assumed. The narrow shape is deliberate. This app
@@ -889,7 +858,7 @@ attempting it while rendering throws — and because the attempt was wrapped in 
 child's calendar could never fail over bookkeeping, the count silently stayed at zero. A swallowed
 error in exactly the feature built to stop silent failures.
 
-### 5.16 Not built: hosting this for other families
+### 5.15 Not built: hosting this for other families
 
 What it would take to open the server so other families could sign up — pricing, trust and safety,
 an operator's cockpit, and how it would be wound down — has been thought through at length and
