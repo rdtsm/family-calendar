@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "family-calendar",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": { "enabled": true },
+
+  // Turn this off once a custom domain is live. A second origin means a second
+  // push subscription for the same phone, and therefore duplicate reminders.
+  "workers_dev": false,
+
+  // Every deployed version would otherwise get its own public address, all
+  // sharing one database. One entry point is enough.
+  "preview_urls": false,
+
+  // `wrangler d1 create family-calendar` prints the database_id to paste here.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "family-calendar",
+      "database_id": "<paste the id `wrangler d1 create` printed>"
+    }
+  ],
+
+  // Optional: serve from your own domain instead of workers.dev. The zone must
+  // already be on Cloudflare; the record and certificate are created for you.
+  // The app serves from the root of whatever host it is bound to, so either
+  // shape works with no code change:
+  //   { "pattern": "calendar.example.com", "custom_domain": true }   // subdomain
+  //   { "pattern": "example.com",          "custom_domain": true }   // apex
+  // Remember to update APP_URL in workers/reminders/wrangler.jsonc to match.
+  // "routes": [{ "pattern": "calendar.example.com", "custom_domain": true }],
+
+  "vars": {
+    "NEXT_PUBLIC_FAMILY_TZ": "Europe/London"
+  }
+  // Optional, set with `wrangler secret put ROOT_REDIRECT_URL` so it stays out
+  // of the repository: where the bare domain should send visitors. Unset, the
+  // root serves the parent app.
+  // Secrets are set with `wrangler secret put`, never in this file:
+  //   PARENT_PIN, SESSION_SECRET, CRON_SECRET,
+  //   NEXT_PUBLIC_VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT
+}

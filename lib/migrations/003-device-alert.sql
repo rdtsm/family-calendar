@@ -1,0 +1,11 @@
+-- Acknowledgement for the new-device warning on the parent dashboard.
+--
+-- One-shot, like 001 and 002. Run once against an existing deployment, BEFORE
+-- deploying the code that reads it:
+--
+--   npx wrangler d1 execute family-calendar --remote --file lib/migrations/003-device-alert.sql
+--
+-- Existing rows stay null, so every device already recorded shows up once as
+-- new. That is the correct behaviour on the first run rather than a defect:
+-- nobody has ever confirmed them.
+alter table link_opens add column acknowledged_at text;

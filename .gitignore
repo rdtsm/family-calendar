@@ -1,0 +1,26 @@
+node_modules
+.next
+.env.local
+.env*.local
+test-results
+playwright-report
+*.tsbuildinfo
+next-env.d.ts
+.data
+.data-test
+worker-configuration.d.ts
+.open-next
+.wrangler
+
+# Machine-local Claude Code permissions
+.claude/settings.local.json
+
+# The template must ship even though the global ignore excludes .env.*
+!.env.example
+# database dumps carry child names and live tokens — never commit one
+backups/
+
+# Deployment identity: the live database id and hostname. Copy the .example
+# files and fill them in. Ours are symlinks into ../family-calendar-private.
+wrangler.jsonc
+workers/reminders/wrangler.jsonc

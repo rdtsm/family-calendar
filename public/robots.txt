@@ -1,0 +1,4 @@
+# Nothing here is for a search engine: /parent is a login and /k/* are per-child
+# credentials. Indexing either would only make them easier to find.
+User-agent: *
+Disallow: /

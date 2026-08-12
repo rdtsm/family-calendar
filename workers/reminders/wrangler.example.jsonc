@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "family-calendar-reminders",
+  "main": "index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+
+  // Every five minutes. The interval must be no longer than the SHORTEST
+  // reminder lead, or that window can fall entirely between two runs and be
+  // missed with no error anywhere.
+  "triggers": { "crons": ["*/5 * * * *"] },
+
+  "vars": {
+    "APP_URL": "https://<your-app>.workers.dev"
+  }
+  // `wrangler secret put CRON_SECRET` — must match the application's.
+}

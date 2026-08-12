@@ -1,0 +1,41 @@
+{
+  "name": "family-calendar",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:push": "node scripts/db-push.mjs",
+    "db:seed": "node scripts/seed.mjs",
+    "keys": "node scripts/gen-keys.mjs",
+    "test": "rm -rf .data-test && TZ=America/Los_Angeles NEXT_PUBLIC_FAMILY_TZ=Asia/Singapore playwright test",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "deploy:cron": "wrangler deploy --config workers/reminders/wrangler.jsonc",
+    "d1:push": "wrangler d1 execute family-calendar --remote --file lib/schema.sql",
+    "d1:push:local": "wrangler d1 execute family-calendar --local --file lib/schema.sql"
+  },
+  "dependencies": {
+    "@date-fns/tz": "^1.2.0",
+    "@opennextjs/cloudflare": "^1.20.2",
+    "date-fns": "^4.1.0",
+    "next": "^15.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "tailwindcss": "^4.1.13",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.118.0"
+  },
+  "allowScripts": {
+    "workerd@1.20260730.1": true
+  }
+}

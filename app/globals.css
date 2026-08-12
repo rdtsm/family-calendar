@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+/*
+ * A single light theme, tuned for the hardest case: a phone at arm's length,
+ * outdoors, glanced at while doing something else.
+ *
+ * Two rules the previous dark theme broke:
+ *   1. Hierarchy comes from size and weight, never from opacity. Fading text
+ *      to 35% also fades its legibility, and the faded line was the one
+ *      carrying the instruction.
+ *   2. Every text colour clears WCAG AA (4.5:1) on the surface it sits on.
+ *      The three foreground tokens measure roughly 13:1, 6:1 and 4.6:1.
+ */
+@theme {
+  --font-sans: ui-rounded, "SF Pro Rounded", -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
+
+  /* Surfaces, lightest to most raised. */
+  --color-surface: oklch(0.995 0.002 280);
+  --color-card: oklch(0.965 0.005 280);
+  --color-raised: oklch(0.925 0.008 280);
+  --color-line: oklch(0.87 0.01 280);
+
+  /* Foregrounds. Nothing lighter than fg-3 is allowed to carry words. */
+  --color-fg: oklch(0.24 0.015 280);
+  --color-fg-2: oklch(0.42 0.014 280);
+  --color-fg-3: oklch(0.50 0.013 280);
+
+  /* Sits on top of an accent fill. */
+  --color-on-accent: oklch(0.20 0.012 280);
+
+  /*
+   * Each child's colour needs two values: a light `fill` that carries dark text
+   * at ~6:1, and a dark `ink` for the same hue used as text or a border on a
+   * light surface, where the fill would measure only ~3:1 and fail.
+   */
+  --color-kid-violet: oklch(0.74 0.16 300);
+  --color-kid-sky: oklch(0.76 0.13 230);
+  --color-kid-mint: oklch(0.80 0.14 165);
+  --color-kid-amber: oklch(0.83 0.14 75);
+  --color-kid-rose: oklch(0.74 0.16 15);
+  --color-kid-lime: oklch(0.84 0.16 130);
+
+  --color-kid-violet-ink: oklch(0.45 0.20 300);
+  --color-kid-sky-ink: oklch(0.44 0.15 230);
+  --color-kid-mint-ink: oklch(0.42 0.12 165);
+  --color-kid-amber-ink: oklch(0.44 0.12 75);
+  --color-kid-rose-ink: oklch(0.46 0.19 15);
+  --color-kid-lime-ink: oklch(0.42 0.13 130);
+}
+
+:root {
+  color-scheme: light;
+  --accent: var(--color-kid-violet);
+  --accent-ink: var(--color-kid-violet-ink);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* Home-screen apps must clear the notch and the gesture bar. */
+.safe-top {
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+.safe-bottom {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Native controls should match the theme rather than default to a dark UA sheet. */
+input[type="date"],
+input[type="time"],
+input[type="text"],
+input[type="password"] {
+  color-scheme: light;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--accent) 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.now-dot {
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .now-dot {
+    animation: none;
+  }
+}
