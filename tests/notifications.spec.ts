@@ -71,6 +71,38 @@ async function kidLink(page: Page, name: string): Promise<string> {
 
 
 
+/** Every send-once claim standing against an event, read by title. */
+function ledgerKeys(title: string): string[] {
+  const db = new DatabaseSync(".data-test/family.sqlite");
+  try {
+    const ev = db.prepare("select id from events where title = ? limit 1").all(title)[0] as
+      | { id: string }
+      | undefined;
+    if (!ev) return [];
+    const rows = db
+      .prepare("select key from notifications_sent where key like ?")
+      .all(`lead%:${ev.id}`) as { key: string }[];
+    return rows.map((r) => r.key);
+  } finally {
+    db.close();
+  }
+}
+
+/** Opens the row's edit panel on the parent screen and moves it `mins` from now. */
+async function moveTo(page: Page, title: string, mins: number) {
+  const t = new Date(Date.now() + mins * 60_000);
+  await page.goto("/parent");
+  const agenda = page.getByRole("region", { name: "Coming up" });
+  await agenda.getByRole("button", { name: `Edit ${title}`, exact: true }).first().click();
+
+  const panel = page.getByRole("form", { name: "Edit activity" });
+  await panel.getByLabel("Date").fill(dayKeyOf(t));
+  await panel.getByLabel("Start time").fill(fmtTime(t));
+  await panel.getByLabel("End time").fill(fmtTime(new Date(t.getTime() + 60 * 60_000)));
+  await panel.getByRole("button", { name: "Save changes" }).click();
+  await expect(panel).toBeHidden();
+}
+
 /** Schedule something `mins` out so a given reminder window catches it. */
 async function scheduleSoon(page: Page, child: string, title: string, mins = 40) {
   // Family-timezone wall clock, not the runner's — the two differ in this suite
@@ -155,6 +187,30 @@ test.describe("reminder endpoint", () => {
     // Far out: nothing should fire yet, from either path.
     await scheduleSoon(page, "Ada", "Rowing", 300);
     expect((await (await cron(request)).json()).leadClaimed).toBe(0);
+  });
+
+  test("a moved activity is announced again, at the time it moved to", async ({ page, request }) => {
+    await unlock(page);
+    await ensureChild(page, "Wren");
+
+    // 40 minutes out, inserted directly so the scheduler is what announces it.
+    insertEventDirect(await tokenFor(page, "Wren"), 40, "Hurling");
+    expect((await (await cron(request)).json()).leadClaimed).toBe(1);
+    expect(ledgerKeys("Hurling")).toHaveLength(1);
+
+    /*
+     * The claim is keyed to the event id, which a correction does not change.
+     * Left standing, it silences the new time — the move would reach the
+     * parent's screen and never reach the child's, which is the worst shape a
+     * bug can take here: silent, and only visible to the person it fails.
+     */
+    await moveTo(page, "Hurling", 300);
+    await expect.poll(() => ledgerKeys("Hurling")).toHaveLength(0);
+
+    // Moved back inside a window, the edit announces it itself rather than
+    // waiting for a tick that may land after it has started.
+    await moveTo(page, "Hurling", 45);
+    await expect.poll(() => ledgerKeys("Hurling")).toHaveLength(1);
   });
 
   test("a device the push service rejects is counted, not swallowed", async ({ page, request }) => {

@@ -189,6 +189,69 @@ export async function deleteEvent(id: string): Promise<void> {
   else await sql`delete from events where id = ${id}`;
 }
 
+export type EventPatch = {
+  title: string;
+  emoji: string;
+  location: string | null;
+  startsAt: Date;
+  endsAt: Date;
+  /** Moving an activity un-ticks it: what was done was the old one. */
+  clearDone: boolean;
+};
+
+/**
+ * Corrects one activity, however many members are on it — the same rule delete
+ * follows, because the rows of a group are one activity seen from each member.
+ *
+ * `created_by = 'parent'` is the whole permission story from this side, the
+ * mirror of `deleteOwnEvent`'s `created_by = 'child'`. A child's own entry never
+ * reaches the parent's agenda in the first place; this makes reaching it
+ * impossible rather than merely unlikely.
+ *
+ * Returns the ids actually changed — empty if the activity has since gone, or
+ * if it was never the parent's to change.
+ */
+export async function updateEventGroup(id: string, p: EventPatch): Promise<string[]> {
+  const found = await sql<{ id: string; group_id: string | null }>`
+    select id, group_id from events where id = ${id} and created_by = 'parent'
+  `;
+  if (!found.length) return [];
+
+  const group = found[0].group_id;
+  const ids = group
+    ? (
+        await sql<{ id: string }>`
+          select id from events where group_id = ${group} and created_by = 'parent'
+        `
+      ).map((r) => r.id)
+    : [found[0].id];
+
+  for (const target of ids) {
+    await sql`
+      update events
+      set title = ${p.title}, emoji = ${p.emoji}, location = ${p.location},
+          starts_at = ${p.startsAt.toISOString()}, ends_at = ${p.endsAt.toISOString()}
+      where id = ${target}
+    `;
+    if (p.clearDone) await sql`update events set done_at = null where id = ${target}`;
+  }
+  return ids;
+}
+
+/**
+ * Forgets that these events were announced, so a new time is announced again.
+ *
+ * Without it a reminder already sent keeps its claim under the event's id and
+ * silences the corrected time — the move would reach the parent's screen and
+ * never reach the child's. Matched on the id suffix rather than rebuilt from
+ * LEADS, so changing the lead list cannot strand a claim nobody looks for.
+ */
+export async function clearReminderLedger(eventIds: string[]): Promise<void> {
+  for (const id of eventIds) {
+    await sql`delete from notifications_sent where key like ${`lead%:${id}`}`;
+  }
+}
+
 /** Stops every member's copy of a repeat, forward-looking as always. */
 export async function endSeriesGroup(seriesId: string, from: Date): Promise<void> {
   const rows = await sql<{ group_id: string | null }>`select group_id from series where id = ${seriesId}`;

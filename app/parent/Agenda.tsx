@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Child } from "@/lib/db";
 import { accent } from "@/lib/colors";
 import { dayKeyOf, fmtDayLabel, fmtTime, shiftDay, type DayKey } from "@/lib/time";
@@ -8,6 +8,7 @@ import { dayKeyOf, fmtDayLabel, fmtTime, shiftDay, type DayKey } from "@/lib/tim
 /** How much further ahead each "Show more" reaches. */
 const WEEKS_STEP = 5;
 import { deleteEventAction } from "./actions";
+import EditEvent from "./EditEvent";
 
 type Row = {
   id: string;
@@ -24,9 +25,12 @@ type Row = {
 
 export default function Agenda({ children, events, today }: { children: Child[]; events: Row[]; today: DayKey }) {
   const [filter, setFilter] = useState<string>("all");
+  // One at a time: tapping another row moves the panel rather than opening a second.
+  const [editing, setEditing] = useState<string | null>(null);
   // A year is loaded, but rendering a year of weekly repeats at once is several
   // hundred rows on a phone. Revealed a chunk at a time, from data already here.
   const [weeks, setWeeks] = useState(WEEKS_STEP);
+  const stopEditing = useCallback(() => setEditing(null), []);
   const byId = useMemo(() => new Map(children.map((c) => [c.id, c])), [children]);
 
   const horizon = useMemo(() => shiftDay(today, weeks * 7), [today, weeks]);
@@ -85,24 +89,52 @@ export default function Agenda({ children, events, today }: { children: Child[];
                   return (
                     <li
                       key={e.groupId ?? e.id}
-                      className="flex items-center gap-3 rounded-2xl bg-card p-3"
+                      className="rounded-2xl bg-card p-3"
                       style={{ boxShadow: `inset 3px 0 0 0 ${a}` }}
                     >
-                      <span className="w-24 shrink-0 text-[15px] font-semibold tabular-nums text-fg-2">
-                        {fmtTime(e.startsAt)}–{fmtTime(e.endsAt)}
-                      </span>
-                      <span aria-hidden>{e.emoji}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[17px] font-semibold">
-                          {e.title}
-                          {done && <span className="ml-2 text-[13px] font-bold text-kid-mint-ink">DONE</span>}
+                      {editing === e.id ? (
+                        <EditEvent
+                          event={{
+                            id: e.id,
+                            title: e.title,
+                            location: e.location,
+                            startsAt: e.startsAt,
+                            endsAt: e.endsAt,
+                            seriesId: e.seriesId,
+                          }}
+                          who={names.join(" & ")}
+                          today={today}
+                          onDone={stopEditing}
+                        />
+                      ) : (
+                        <div className="flex items-center gap-3">
+                          {/* The whole line is the way in. A pencil beside the ×
+                              would say so more loudly, and cost the title the
+                              width it needs on a 360px phone. */}
+                          <button
+                            type="button"
+                            onClick={() => setEditing(e.id)}
+                            aria-label={`Edit ${e.title}`}
+                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                          >
+                            <span className="w-24 shrink-0 text-[15px] font-semibold tabular-nums text-fg-2">
+                              {fmtTime(e.startsAt)}–{fmtTime(e.endsAt)}
+                            </span>
+                            <span aria-hidden>{e.emoji}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[17px] font-semibold">
+                                {e.title}
+                                {done && <span className="ml-2 text-[13px] font-bold text-kid-mint-ink">DONE</span>}
+                              </div>
+                              <div className="truncate text-[15px] text-fg-2">
+                                {names.join(" & ")}
+                                {e.location ? ` · ${e.location}` : ""}
+                              </div>
+                            </div>
+                          </button>
+                          <DeleteButtons id={e.id} seriesId={e.seriesId} />
                         </div>
-                        <div className="truncate text-[15px] text-fg-2">
-                          {names.join(" & ")}
-                          {e.location ? ` · ${e.location}` : ""}
-                        </div>
-                      </div>
-                      <DeleteButtons id={e.id} seriesId={e.seriesId} />
+                      )}
                     </li>
                   );
                 })}

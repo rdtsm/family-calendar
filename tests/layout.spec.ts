@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { todayKey } from "../lib/time";
 
 /*
  * Layout, not behaviour.
@@ -76,10 +77,13 @@ test.describe("the form fits the phone it is used on", () => {
       boxes.push(box!);
     }
 
-    // Read the gap off the page rather than restating the class, so changing
-    // one does not silently invalidate the other.
-    const sameRow = boxes.filter((b) => Math.round(b.y) === Math.round(boxes[0].y)).sort((a, b) => a.x - b.x);
-    const gap = sameRow.length > 1 ? sameRow[1].x - (sameRow[0].x + sameRow[0].width) : 6;
+    // Read the gap off the page rather than restating the class, so changing one
+    // does not silently invalidate the other — but read it from the container's
+    // own style rather than from the distance between two of these five. They
+    // are only neighbours while nobody else is in the household: the first time
+    // another fixture landed between them this measured 92px and failed a
+    // layout that was correct.
+    const gap = await group.evaluate((el) => parseFloat(getComputedStyle(el).columnGap) || 6);
 
     const inner = (await page.getByLabel("Date").locator("xpath=..").boundingBox())!.width;
     let rows = 1;
@@ -167,6 +171,37 @@ test.describe("the form fits the phone it is used on", () => {
     const parentGutter = await page.evaluate(() => getComputedStyle(document.querySelector("main")!).paddingLeft);
     expect(parentGutter).toBe("16px");
     await kid.close();
+  });
+
+  test("the edit panel fits the row it opens in", async ({ page }) => {
+    // The correction form is the widest thing the agenda ever holds, and it is
+    // nested one card deeper than the form it borrows its fields from.
+    await page.getByLabel("Activity").fill("Fresco");
+    await page.getByLabel("Date").fill(todayKey());
+    await page.getByRole("button", { name: "Add to calendar" }).click();
+    await expect(page.getByRole("status")).toBeVisible();
+
+    await page
+      .getByRole("region", { name: "Coming up" })
+      .getByRole("button", { name: "Edit Fresco", exact: true })
+      .first()
+      .click();
+
+    const panel = page.getByRole("form", { name: "Edit activity" });
+    const box = (await panel.boundingBox())!;
+    for (const label of ["Activity", "Date", "Start time", "End time"]) {
+      const b = (await panel.getByLabel(label).boundingBox())!;
+      expect(b.x, `${label} starts left of the panel`).toBeGreaterThanOrEqual(box.x);
+      expect(b.x + b.width, `${label} runs past the panel`).toBeLessThanOrEqual(box.x + box.width + 1);
+    }
+
+    // Both ways out stay thumb-sized, side by side.
+    const save = (await panel.getByRole("button", { name: "Save changes" }).boundingBox())!;
+    const cancel = (await panel.getByRole("button", { name: "Cancel" }).boundingBox())!;
+    expect(save.height).toBeGreaterThanOrEqual(42);
+    expect(cancel.height).toBeGreaterThanOrEqual(42);
+    expect(Math.abs(save.y - cancel.y)).toBeLessThan(4);
+    expect(cancel.x).toBeGreaterThan(save.x + save.width);
   });
 
   test("every chip stays big enough to hit", async ({ page }) => {

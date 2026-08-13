@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { DatabaseSync } from "node:sqlite";
 import { dayKeyOf, fmtDayLabel, fmtTime, shiftDay, todayKey } from "../lib/time";
 
 const PIN = "246810";
@@ -323,6 +324,196 @@ test.describe("the mother plans the week", () => {
     await expect(leo.getByText("Football").first()).toBeVisible();
     await expect(leo.getByText("Boxing")).toHaveCount(0);
     await leo.close();
+  });
+});
+
+/** The panel that opens in place of the row. Only ever one at a time. */
+const editPanel = (page: Page) => page.getByRole("form", { name: "Edit activity" });
+
+/**
+ * Taps a row open and applies the changes given. The row locator is not reused
+ * afterwards on purpose: once the panel replaces the line, the title lives in an
+ * input's value and is no longer text anyone can filter on.
+ */
+async function editActivity(
+  page: Page,
+  title: string,
+  changes: { title?: string; day?: string; start?: string; end?: string; where?: string },
+  expectSaved = true,
+) {
+  await agenda(page).getByRole("button", { name: `Edit ${title}`, exact: true }).first().click();
+  const panel = editPanel(page);
+  await expect(panel).toBeVisible();
+
+  if (changes.title !== undefined) await panel.getByLabel("Activity").fill(changes.title);
+  if (changes.day !== undefined) await panel.getByLabel("Date").fill(changes.day);
+  if (changes.start !== undefined) await panel.getByLabel("Start time").fill(changes.start);
+  if (changes.end !== undefined) await panel.getByLabel("End time").fill(changes.end);
+  if (changes.where !== undefined) await panel.getByPlaceholder("Club, school hall…").fill(changes.where);
+
+  await panel.getByRole("button", { name: "Save changes" }).click();
+  // Closing is the acknowledgement; a rejected save leaves it open with a reason.
+  if (expectSaved) await expect(panel).toBeHidden();
+}
+
+/**
+ * Reads an id straight out of the test database. The only way to name an event
+ * the parent's screen deliberately never shows.
+ */
+function eventIdByTitle(title: string): string {
+  const db = new DatabaseSync(".data-test/family.sqlite");
+  try {
+    const row = db
+      .prepare("select id from events where title = ? order by created_at desc limit 1")
+      .all(title)[0] as { id: string } | undefined;
+    if (!row) throw new Error(`no event titled ${title}`);
+    return row.id;
+  } finally {
+    db.close();
+  }
+}
+
+test.describe("the mother corrects what she entered", () => {
+  test("a wrong time is fixed in the row it sits in", async ({ page }) => {
+    await addActivity(page, { child: "Beatrix", title: "Ballet", day: todayKey(), start: "09:00", end: "10:00" });
+    await editActivity(page, "Ballet", { start: "11:00", end: "12:00", where: "Studio" });
+
+    const row = agenda(page).getByRole("listitem").filter({ hasText: "Ballet" });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("11:00–12:00");
+    await expect(row).toContainText("Studio");
+  });
+
+  test("the correction reaches the child's app", async ({ page, context }) => {
+    await addActivity(page, { child: "Beatrix", title: "Hockey", day: todayKey(), start: "08:00", end: "09:00" });
+    const link = await kidLink(page, "Beatrix");
+    await editActivity(page, "Hockey", { title: "Hockey club", start: "13:00", end: "14:00" });
+
+    const kid = await context.newPage();
+    await kid.goto(link);
+    const row = schedule(kid).getByRole("listitem").filter({ hasText: "Hockey club" });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("13:00");
+    await kid.close();
+  });
+
+  test("Cancel leaves it exactly as it was", async ({ page }) => {
+    await addActivity(page, { child: "Beatrix", title: "Squash", day: todayKey(), start: "07:00", end: "08:00" });
+
+    await agenda(page).getByRole("button", { name: "Edit Squash", exact: true }).click();
+    await editPanel(page).getByLabel("Start time").fill("21:00");
+    await editPanel(page).getByRole("button", { name: "Cancel" }).click();
+
+    await expect(editPanel(page)).toHaveCount(0);
+    await expect(agenda(page).getByRole("listitem").filter({ hasText: "Squash" })).toContainText("07:00–08:00");
+  });
+
+  test("correcting one week of a repeat leaves the other weeks alone", async ({ page }) => {
+    const soon = slotAround(120);
+    await addActivity(page, { child: "Beatrix", title: "Trampoline", ...soon, weekly: true });
+    const before = await agenda(page).getByText("Trampoline").count();
+    expect(before).toBeGreaterThanOrEqual(5);
+
+    // The panel says as much before you press Save.
+    await agenda(page).getByRole("button", { name: "Edit Trampoline", exact: true }).first().click();
+    await expect(editPanel(page)).toContainText("part of a weekly repeat");
+    await editPanel(page).getByLabel("Start time").fill("06:15");
+    await editPanel(page).getByLabel("End time").fill("07:15");
+    await editPanel(page).getByRole("button", { name: "Save changes" }).click();
+    await expect(editPanel(page)).toBeHidden();
+
+    // Same number of weeks, one of them moved.
+    await expect(agenda(page).getByText("Trampoline")).toHaveCount(before);
+    await expect(
+      agenda(page).getByRole("listitem").filter({ hasText: "Trampoline" }).filter({ hasText: "06:15–07:15" }),
+    ).toHaveCount(1);
+  });
+
+  test("a shared activity moves for everyone on it", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, {
+      children: ["Beatrix", "Rex"],
+      title: "Violin",
+      day: todayKey(),
+      start: "16:00",
+      end: "17:00",
+    });
+    await editActivity(page, "Violin", { start: "18:30", end: "19:30" });
+
+    // One row per member behind the collapsed line, so the second member is the
+    // one worth asking: moving only the row that was tapped would leave them
+    // holding an appointment nobody else is at.
+    for (const name of ["Beatrix", "Rex"]) {
+      await agenda(page).getByRole("button", { name, exact: true }).click();
+      await expect(agenda(page).getByRole("listitem").filter({ hasText: "Violin" })).toContainText("18:30–19:30");
+    }
+    await agenda(page).getByRole("button", { name: "All", exact: true }).click();
+  });
+
+  test("moving an activity un-ticks it", async ({ page, context }) => {
+    await addActivity(page, { child: "Beatrix", title: "Yoga", ...todaySlot(6) });
+
+    const kid = await context.newPage();
+    await kid.goto(await kidLink(page, "Beatrix"));
+    await schedule(kid).getByRole("listitem").filter({ hasText: "Yoga" }).getByRole("button").click();
+    await kid.close();
+
+    await page.goto("/parent");
+    const row = agenda(page).getByRole("listitem").filter({ hasText: "Yoga" });
+    await expect(row.getByText("DONE")).toBeVisible();
+
+    // What was ticked off was the old slot. Carrying the tick over would tell
+    // the parent something that never happened.
+    await editActivity(page, "Yoga", { start: "19:45", end: "20:45" });
+    await expect(agenda(page).getByRole("listitem").filter({ hasText: "Yoga" })).toContainText("19:45–20:45");
+    await expect(agenda(page).getByRole("listitem").filter({ hasText: "Yoga" }).getByText("DONE")).toHaveCount(0);
+  });
+
+  test("a child's own entry offers no way in, and refuses a forged one", async ({ page, context }) => {
+    await addActivity(page, { child: "Beatrix", title: "Netball", day: todayKey(), start: "10:00", end: "11:00" });
+
+    const kid = await context.newPage();
+    await kid.goto(await kidLink(page, "Beatrix"));
+    await kid.getByRole("button", { name: "+ Add your own" }).click();
+    const sheet = kid.getByRole("region", { name: "Add your own" });
+    await sheet.getByRole("button", { name: /Playdate/ }).click();
+    await sheet.getByRole("option", { name: "21:00" }).click();
+    await sheet.getByRole("button", { name: "Add at 21:00" }).click();
+    await expect(schedule(kid).getByText("Playdate")).toHaveCount(1);
+
+    // It is not on the parent's screen, so there is nothing to tap.
+    await page.goto("/parent");
+    await expect(agenda(page).getByRole("button", { name: /^Edit Playdate$/ })).toHaveCount(0);
+
+    // And naming it directly does not get past the action either: the filter
+    // that hides it is the display rule, `created_by` is the actual boundary.
+    const forged = eventIdByTitle("Playdate");
+    await agenda(page).getByRole("button", { name: "Edit Netball", exact: true }).click();
+    await editPanel(page).getByLabel("Start time").fill("05:30");
+    // Last, and nothing after it that re-renders: the id is a controlled input,
+    // so React restores it the moment any other field changes.
+    await editPanel(page).locator('input[name="id"]').evaluate((el, id) => {
+      (el as HTMLInputElement).value = id;
+    }, forged);
+    await editPanel(page).getByRole("button", { name: "Save changes" }).click();
+    await expect(editPanel(page).getByRole("alert")).toHaveText("That activity is no longer there");
+
+    // Untouched on the child's own screen.
+    await kid.reload();
+    await expect(schedule(kid).getByRole("listitem").filter({ hasText: "Playdate" })).toContainText("21:00");
+    await kid.close();
+  });
+
+  test("moving one week onto another says so rather than failing", async ({ page }) => {
+    await addActivity(page, { child: "Beatrix", title: "Skating", day: todayKey(), start: "05:00", end: "06:00", weekly: true });
+
+    // Next week's occurrence already owns this slot, and (series_id, starts_at)
+    // is unique — the one collision a single-occurrence edit can produce.
+    await editActivity(page, "Skating", { day: shiftDay(todayKey(), 7) }, false);
+    await expect(editPanel(page).getByRole("alert")).toHaveText("There is already one at that time");
+
+    await editPanel(page).getByRole("button", { name: "Cancel" }).click();
+    await expect(agenda(page).getByRole("listitem").filter({ hasText: "Skating" }).first()).toContainText("05:00–06:00");
   });
 });
 

@@ -7,6 +7,7 @@ import { newId, type Kind } from "@/lib/db";
 import { emojiFor } from "@/lib/emoji";
 import { expand, horizonDay } from "@/lib/recurrence";
 import {
+  clearReminderLedger,
   confirmDevices,
   createChild,
   endSeriesGroup,
@@ -19,9 +20,10 @@ import {
   insertEvents,
   renameChild,
   rotateChildToken,
+  updateEventGroup,
 } from "@/lib/queries";
 import { clearFailures, lockedFor, recordFailure } from "@/lib/ratelimit";
-import { childById } from "@/lib/queries";
+import { childById, eventById } from "@/lib/queries";
 import { OUTER_LEAD, sendDueReminder } from "@/lib/reminders";
 import { dayKeyOf, minutesUntil, todayKey } from "@/lib/time";
 import { after } from "next/server";
@@ -134,6 +136,106 @@ export async function addEventAction(_prev: FormState, form: FormData): Promise<
   revalidatePath("/parent");
   revalidatePath("/k", "layout");
   return { ok: weekly ? "Added, every week" : "Added" };
+}
+
+/**
+ * Corrects an activity already on the calendar: what, when, where.
+ *
+ * Not who, and not the repeat. Both are structural — who means adding and
+ * removing rows of a group, the repeat means creating or ending a series — and
+ * both stay delete-and-re-add, which already handles them. This is the
+ * correction a rushed household actually makes: the wrong time, or a typo.
+ *
+ * A repeat is edited one occurrence at a time. The form says so before you
+ * press Save, so nobody presses it expecting every Tuesday to move.
+ */
+export async function editEventAction(_prev: FormState, form: FormData): Promise<FormState> {
+  await requireParent();
+
+  const id = String(form.get("id") ?? "");
+  const title = String(form.get("title") ?? "").trim();
+  const day = String(form.get("day") ?? "");
+  const start = String(form.get("start") ?? "");
+  const end = String(form.get("end") ?? "");
+  const location = String(form.get("location") ?? "").trim() || null;
+
+  if (!id) return { error: "Unknown activity" };
+  if (!title) return { error: "Add a title" };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { error: "Pick a date" };
+  if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) return { error: "Pick a start and end time" };
+
+  const today = todayKey();
+  // Past the horizon the agenda simply stops loading, so a move out there would
+  // read as the activity having been deleted. Creating a one-off out there is
+  // still allowed and has the same effect — an older gap, left alone rather than
+  // widened into this change.
+  if (day > horizonDay(today)) return { error: "That date is beyond the calendar’s horizon" };
+
+  const before = await eventById(id);
+  if (!before || before.created_by !== "parent") return { error: "That activity is no longer there" };
+
+  // One occurrence, through the same expansion the create path uses, so the
+  // past-midnight rule and the daylight-saving conversion are inherited rather
+  // than restated here and allowed to disagree.
+  const [when] = expand(day, start, end, false, today);
+  const moved = when.startsAt.getTime() !== new Date(before.starts_at).getTime();
+  const emoji = emojiFor(title);
+
+  let ids: string[];
+  try {
+    ids = await updateEventGroup(id, {
+      title,
+      emoji,
+      location,
+      startsAt: when.startsAt,
+      endsAt: when.endsAt,
+      clearDone: moved,
+    });
+  } catch (err) {
+    // (series_id, starts_at) is unique. The only way to hit it is to move one
+    // occurrence of a repeat exactly onto another occurrence of the same one.
+    if (/unique/i.test(String(err))) return { error: "There is already one at that time" };
+    throw err;
+  }
+  if (!ids.length) return { error: "That activity is no longer there" };
+
+  if (moved) {
+    await clearReminderLedger(ids);
+
+    // Same reasoning as creation: an activity moved into a reminder window would
+    // otherwise wait for a scheduler tick that may not come before it starts.
+    // The ledger was just cleared, so this is the announcement of the new time
+    // rather than a repeat of the old one.
+    if (minutesUntil(when.startsAt) > 0 && minutesUntil(when.startsAt) <= OUTER_LEAD) {
+      after(async () => {
+        for (const eventId of ids) {
+          try {
+            const ev = await eventById(eventId);
+            if (!ev) continue;
+            const child = await childById(ev.child_id);
+            // Adults have no device to push to; their calendar is the reminder.
+            if (!child || child.kind !== "child") continue;
+            const r = await sendDueReminder({
+              id: ev.id,
+              title,
+              emoji,
+              location,
+              starts_at: ev.starts_at,
+              child_id: ev.child_id,
+              token: child.token,
+            });
+            if (r.errors.length) console.error(`edited reminder: ${r.errors.join(", ")}`);
+          } catch (err) {
+            console.error("edited reminder failed", err);
+          }
+        }
+      });
+    }
+  }
+
+  revalidatePath("/parent");
+  revalidatePath("/k", "layout");
+  return { ok: "Saved" };
 }
 
 export async function deleteEventAction(form: FormData) {

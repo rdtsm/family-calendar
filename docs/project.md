@@ -870,9 +870,58 @@ Worth recording here because it is a fact about *this* schema: the change is muc
 `children.family_id` column, and four queries that currently read across all children. The scheduler
 needs nothing at all.
 
+### 5.16 Correcting an activity
+
+*Added 2026-08-13.* Until now the answer to a wrong time was to delete and re-add. That is fine for
+the rare case and wrong for the common one: the entry a parent most wants back is the one they just
+typed with the wrong number in it.
+
+**One occurrence, and only what, when and where.** Not who, and not the repeat. Both of those are
+structural — who means adding and removing rows of a group, the repeat means creating or ending a
+series — and both keep working through delete-and-re-add, which already handles them. Excluding them
+is most of the reason this feature is small. A repeat is corrected one week at a time, and the panel
+says so above the fields rather than after the fact.
+
+**It opens in the row, not in the form at the top.** Turning the *New activity* card into an edit
+form would have cost nothing to build, but tapping a row half a screen down would then throw the
+page to the top — away from the thing being corrected. The delete confirmation already expands in
+place, so the gesture is one the screen has taught once already.
+
+**The whole line is the way in.** A ✎ beside the ✕ would be more discoverable and would cost the
+title about 36px on a 360px phone, which is the width the layout guard exists to protect. The trade
+was made in favour of the title. Note the consequence: a tap means *edit* on the parent's screen and
+*mark done* on the child's. Different apps, different people, no better gesture free on either.
+
+**Three things the correction has to do that the form never shows:**
+
+- **Clear the send-once claim.** `notifications_sent` is keyed `lead<n>:<event id>`, and an id does
+  not change when a time does. Left standing, a reminder already sent silences the new time — the
+  move reaches the parent's screen and never reaches the child's. The claim is deleted whenever the
+  start moves, and the same immediate-send path creation uses then re-announces it if the new time is
+  already inside a lead window.
+- **Un-tick it.** What the child ticked off was the old slot.
+- **Move the whole group.** The rows of a multi-member activity are one activity seen from each
+  member, so the correction follows `group_id` exactly as deletion does.
+
+**Two guards, not one.** `allEventsInRange` filters to `created_by = 'parent'`, so a child's own
+entry never appears on the parent's screen and offers nothing to tap; `updateEventGroup` carries the
+same condition in its `where`, the mirror of `deleteOwnEvent`'s `created_by = 'child'`. The test
+forges the hidden id in the browser to prove the second one matters — and finding a way to write that
+test taught something worth keeping: **a controlled input cannot be tampered with and then left
+alone.** Changing any other field re-renders the form and React restores the value, so the forgery
+has to be the last thing that happens before submit.
+
+**The one collision a single-occurrence edit can produce** is moving a week of a repeat exactly onto
+another week of the same repeat, which the unique `(series_id, starts_at)` index refuses. It is
+reported as *"There is already one at that time"* rather than surfacing as a 500.
+
+Deferred: editing a whole series at once. It needs the series row updated alongside every future
+occurrence, and a date field that means something different in that mode — real work, and worth
+doing only once single-occurrence editing has been lived with.
+
 ## 6. Testing
 
-96 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
+106 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
 shares a single database within a run, so a reused name silently doubles a count and the failure
 looks like a bug in the feature rather than in the fixture. It has cost time three times.
 
@@ -917,6 +966,13 @@ are deterministic and the development database is never touched.
   fails legitimately, because greedy wrapping cannot always reach it. What works is measuring the
   five chips individually and packing them the way flex-wrap does. A layout assertion has to be
   written against data it controls, or against no data at all.
+
+  **And the same trap once more, from the other side.** The chip guard read its gap from the
+  distance between the first two chips it had measured — which is only the gap while those two are
+  neighbours. Adding one fixture to an unrelated test put another child between them, so it measured
+  92px instead of 6px and failed a layout that was correct. It now reads `columnGap` off the
+  container. **A measurement must not infer its own units from the fixture set**, for the same reason
+  the row count could not be read off the screen.
 
   **And a trap in checking one.** A layout guard is only worth what its negative case proves, so it
   gets checked by reverting the change and confirming it fails. That check was itself wrong once:
