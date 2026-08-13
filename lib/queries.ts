@@ -1,4 +1,6 @@
 import { newId, raw, sql, type CalEvent, type Child, type CreatedBy, type Kind } from "./db";
+import { occurrencesOn } from "./recurrence";
+import { dayKeyOf, fmtTime } from "./time";
 
 export async function getSetting(key: string): Promise<string | null> {
   const rows = await sql<{ value: string }>`select value from settings where key = ${key}`;
@@ -183,10 +185,21 @@ export async function endSeries(seriesId: string, from: Date): Promise<void> {
  * would leave the others holding an appointment with nobody.
  */
 export async function deleteEvent(id: string): Promise<void> {
-  const rows = await sql<{ group_id: string | null }>`select group_id from events where id = ${id}`;
-  const group = rows[0]?.group_id;
-  if (group) await sql`delete from events where group_id = ${group}`;
-  else await sql`delete from events where id = ${id}`;
+  const rows = await sql<{ group_id: string | null; starts_at: string }>`
+    select group_id, starts_at from events where id = ${id}
+  `;
+  const row = rows[0];
+  if (!row) return;
+  // group_id names the activity, not the occurrence — a shared weekly repeat
+  // carries one group id across all fifty-two weeks. Matching on it alone
+  // deleted every week for everyone when the parent asked for one occurrence.
+  // The start instant is what narrows it back to this week; the members of one
+  // occurrence share it exactly.
+  if (row.group_id) {
+    await sql`delete from events where group_id = ${row.group_id} and starts_at = ${row.starts_at}`;
+  } else {
+    await sql`delete from events where id = ${id}`;
+  }
 }
 
 export type EventPatch = {
@@ -212,16 +225,19 @@ export type EventPatch = {
  * if it was never the parent's to change.
  */
 export async function updateEventGroup(id: string, p: EventPatch): Promise<string[]> {
-  const found = await sql<{ id: string; group_id: string | null }>`
-    select id, group_id from events where id = ${id} and created_by = 'parent'
+  const found = await sql<{ id: string; group_id: string | null; starts_at: string }>`
+    select id, group_id, starts_at from events where id = ${id} and created_by = 'parent'
   `;
   if (!found.length) return [];
 
+  // group_id and the start instant together, for the reason deleteEvent gives:
+  // a shared weekly repeat wears one group id for all of its weeks.
   const group = found[0].group_id;
   const ids = group
     ? (
         await sql<{ id: string }>`
-          select id from events where group_id = ${group} and created_by = 'parent'
+          select id from events
+          where group_id = ${group} and starts_at = ${found[0].starts_at} and created_by = 'parent'
         `
       ).map((r) => r.id)
     : [found[0].id];
@@ -236,6 +252,101 @@ export async function updateEventGroup(id: string, p: EventPatch): Promise<strin
     if (p.clearDone) await sql`update events set done_at = null where id = ${target}`;
   }
   return ids;
+}
+
+export type SeriesPatch = {
+  title: string;
+  emoji: string;
+  location: string | null;
+  /** Wall clock in the family timezone, the form's own values. */
+  startTime: string;
+  endTime: string;
+};
+
+/**
+ * Corrects a repeat: the pattern itself, and every occurrence still to come
+ * that follows it.
+ *
+ * **A week corrected on its own is left alone.** An occurrence whose title,
+ * place or wall-clock time no longer matches its series row is by definition
+ * one somebody changed deliberately, and overwriting it would undo that with
+ * nothing on screen to say so. Deriving that from the series row is what makes
+ * it free — the pattern is already stored, and every occurrence is created
+ * from it, so divergence *is* the record of a correction. No extra column.
+ *
+ * The day is never moved. Rewriting which weekday a repeat falls on would
+ * collide with the unique (series_id, starts_at) index halfway through, and
+ * would have to recompute `materialised_through` or leave the scheduler topping
+ * up the wrong runway. Deleting the repeat and adding it again already does it.
+ *
+ * Forward-looking, like every other write here: what already happened stays.
+ * Returns the occurrences whose start actually moved, which is what the
+ * reminder ledger has to be told about.
+ */
+export async function updateSeriesGroup(
+  seriesId: string,
+  p: SeriesPatch,
+  from: Date,
+): Promise<{ moved: { id: string; startsAt: string }[] }> {
+  const head = await sql<{ group_id: string | null }>`select group_id from series where id = ${seriesId}`;
+  if (!head.length) return { moved: [] };
+
+  // One series per member of a shared repeat, exactly as endSeriesGroup walks it.
+  const group = head[0].group_id;
+  const ids = group
+    ? (await sql<{ id: string }>`select id from series where group_id = ${group}`).map((r) => r.id)
+    : [seriesId];
+
+  const moved: { id: string; startsAt: string }[] = [];
+
+  for (const id of ids) {
+    const rows = await sql<{ title: string; location: string | null; start_time: string; end_time: string }>`
+      select title, location, start_time, end_time from series where id = ${id}
+    `;
+    const pattern = rows[0];
+    if (!pattern) continue;
+
+    const events = await sql<CalEvent>`
+      select id, child_id, title, emoji, location, starts_at, ends_at, series_id, group_id, created_by, done_at
+      from events
+      where series_id = ${id} and created_by = 'parent' and starts_at >= ${from.toISOString()}
+      order by starts_at
+    `;
+
+    for (const e of events) {
+      const follows =
+        e.title === pattern.title &&
+        (e.location ?? null) === (pattern.location ?? null) &&
+        // Wall clock, not the instant: an occurrence keeps its local time across
+        // a daylight-saving change, so this is the comparison that holds.
+        fmtTime(e.starts_at) === pattern.start_time &&
+        fmtTime(e.ends_at) === pattern.end_time;
+      if (!follows) continue;
+
+      const [when] = occurrencesOn([dayKeyOf(e.starts_at)], p.startTime, p.endTime);
+      await sql`
+        update events
+        set title = ${p.title}, emoji = ${p.emoji}, location = ${p.location},
+            starts_at = ${when.startsAt.toISOString()}, ends_at = ${when.endsAt.toISOString()}
+        where id = ${e.id}
+      `;
+      if (when.startsAt.getTime() !== new Date(e.starts_at).getTime()) {
+        await sql`update events set done_at = null where id = ${e.id}`;
+        moved.push({ id: e.id, startsAt: when.startsAt.toISOString() });
+      }
+    }
+
+    // The pattern last, so the comparison above is made against what the
+    // occurrences were actually created from.
+    await sql`
+      update series
+      set title = ${p.title}, emoji = ${p.emoji}, location = ${p.location},
+          start_time = ${p.startTime}, end_time = ${p.endTime}
+      where id = ${id}
+    `;
+  }
+
+  return { moved };
 }
 
 /**

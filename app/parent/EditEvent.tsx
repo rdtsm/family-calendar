@@ -1,10 +1,16 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { PARENT_ACCENT } from "@/lib/colors";
-import { dayKeyOf, fmtTime, type DayKey } from "@/lib/time";
+import { dayKeyOf, fmtTime, fmtWeekdayLong, type DayKey } from "@/lib/time";
 import { editEventAction, type FormState } from "./actions";
 import { Field, TitleField, WhenFields } from "./fields";
+
+/* One save button or two, they are the same button. 15px because two of them
+   side by side have to hold their words at 360px. */
+const SAVE =
+  "rounded-2xl px-2 py-3.5 text-[15px] font-bold text-on-accent transition active:scale-[0.98] disabled:opacity-60";
+const ACCENT = { background: PARENT_ACCENT };
 
 /**
  * Correcting an activity, in the row it already occupies.
@@ -13,7 +19,8 @@ import { Field, TitleField, WhenFields } from "./fields";
  * the thing being corrected stays in view, and a list a screen long does not
  * throw you to the top to change one number.
  *
- * Who and the repeat are stated, not offered — see `editEventAction`.
+ * A repeat offers the same two scopes deletion does. Who is stated, not
+ * offered — see `editEventAction`.
  */
 export default function EditEvent({
   event,
@@ -27,11 +34,16 @@ export default function EditEvent({
   onDone: () => void;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(editEventAction, {});
+  const originalDay = dayKeyOf(event.startsAt);
   const [title, setTitle] = useState(event.title);
-  const [day, setDay] = useState<DayKey>(dayKeyOf(event.startsAt));
+  const [day, setDay] = useState<DayKey>(originalDay);
   const [start, setStart] = useState(fmtTime(event.startsAt));
   const [end, setEnd] = useState(fmtTime(event.endsAt));
   const [location, setLocation] = useState(event.location ?? "");
+  const scope = useRef<HTMLInputElement>(null);
+  const setScope = (v: string) => {
+    if (scope.current) scope.current.value = v;
+  };
 
   // The saved row is already on screen behind the panel, so there is nothing
   // left to read here.
@@ -56,10 +68,17 @@ export default function EditEvent({
     <form action={action} aria-label="Edit activity" className="space-y-4">
       <input type="hidden" name="id" value={event.id} />
       <input type="hidden" name="day" value={day} />
+      {/* Uncontrolled on purpose. The scope cannot ride on the submit button's
+          own name and value — those do not reach a server action's FormData —
+          and it cannot be React state either, because the click that sets the
+          state is the same click that submits. A ref written in the handler is
+          read by the submit that follows it, and `defaultValue` is what stops
+          React putting it back. */}
+      <input ref={scope} type="hidden" name="scope" defaultValue="one" />
 
       <p className="text-[15px] text-fg-2">
         {who}
-        {event.seriesId && " · part of a weekly repeat — this changes only this week"}
+        {event.seriesId && ` · every ${fmtWeekdayLong(originalDay)}`}
       </p>
 
       <Field label="What">
@@ -89,22 +108,43 @@ export default function EditEvent({
         />
       </Field>
 
-      <div className="flex gap-2">
-        <button
-          disabled={pending}
-          className="flex-1 rounded-2xl py-3.5 text-[17px] font-bold text-on-accent transition active:scale-[0.98] disabled:opacity-60"
-          style={{ background: PARENT_ACCENT }}
-        >
+      {event.seriesId ? (
+        <div className="space-y-2">
+          {/* The same two scopes, in the same order and the same words as the
+              delete confirmation. A repeat is one decision the screen has
+              already taught once. */}
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => setScope("one")} disabled={pending} className={SAVE} style={ACCENT}>
+              Save this week
+            </button>
+            <button
+              onClick={() => setScope("series")}
+              disabled={pending || day !== originalDay}
+              className={SAVE}
+              style={ACCENT}
+            >
+              Save all weeks
+            </button>
+          </div>
+          <p className="text-[13px] text-fg-3">
+            {day !== originalDay
+              ? "A different day applies to this week only. To move every week, delete the repeat and add it again."
+              : "All weeks keeps the day and changes the rest. A week you corrected on its own keeps what you gave it."}
+          </p>
+        </div>
+      ) : (
+        <button disabled={pending} className={`${SAVE} w-full`} style={ACCENT}>
           {pending ? "Saving…" : "Save changes"}
         </button>
-        <button
-          type="button"
-          onClick={onDone}
-          className="rounded-2xl bg-raised px-5 py-3.5 text-[17px] font-semibold text-fg-2 transition active:scale-[0.98]"
-        >
-          Cancel
-        </button>
-      </div>
+      )}
+
+      <button
+        type="button"
+        onClick={onDone}
+        className="w-full rounded-2xl bg-raised py-3.5 text-[17px] font-semibold text-fg-2 transition active:scale-[0.98]"
+      >
+        Cancel
+      </button>
 
       {state.error && (
         <p role="alert" className="text-center text-[15px] font-semibold text-kid-rose-ink">

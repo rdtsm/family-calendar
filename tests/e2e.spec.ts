@@ -296,6 +296,27 @@ test.describe("the mother plans the week", () => {
       .toBeLessThanOrEqual(1);
   });
 
+  test("deleting one week of a shared repeat leaves the other weeks standing", async ({ page }) => {
+    // group_id names the activity, not the occurrence: a shared weekly repeat
+    // wears one group id across every week. Matching on it alone deleted the
+    // whole term for both children when the mother asked for one afternoon.
+    await ensureChild(page, "Rex");
+    await addActivity(page, {
+      children: ["Beatrix", "Rex"],
+      title: "Lacrosse",
+      ...slotAround(120),
+      weekly: true,
+    });
+    const before = await agenda(page).getByText("Lacrosse").count();
+    expect(before).toBeGreaterThanOrEqual(5);
+
+    const row = agenda(page).getByRole("listitem").filter({ hasText: "Lacrosse" }).first();
+    await row.getByRole("button", { name: "Delete event" }).click();
+    await row.getByRole("button", { name: "This event" }).click();
+
+    await expect(agenda(page).getByText("Lacrosse")).toHaveCount(before - 1);
+  });
+
   test("deleting one occurrence leaves the rest", async ({ page }) => {
     const soon = slotAround(120);
     await addActivity(page, { child: "Beatrix", title: "Piano", ...soon, weekly: true });
@@ -339,9 +360,14 @@ async function editActivity(
   page: Page,
   title: string,
   changes: { title?: string; day?: string; start?: string; end?: string; where?: string },
-  expectSaved = true,
+  opts: { nth?: number; save?: string; expectSaved?: boolean } = {},
 ) {
-  await agenda(page).getByRole("button", { name: `Edit ${title}`, exact: true }).first().click();
+  // A one-off says "Save changes"; a repeat asks which weeks instead.
+  const save = opts.save ?? "Save changes";
+  await agenda(page)
+    .getByRole("button", { name: `Edit ${title}`, exact: true })
+    .nth(opts.nth ?? 0)
+    .click();
   const panel = editPanel(page);
   await expect(panel).toBeVisible();
 
@@ -351,9 +377,9 @@ async function editActivity(
   if (changes.end !== undefined) await panel.getByLabel("End time").fill(changes.end);
   if (changes.where !== undefined) await panel.getByPlaceholder("Club, school hall…").fill(changes.where);
 
-  await panel.getByRole("button", { name: "Save changes" }).click();
+  await panel.getByRole("button", { name: save, exact: true }).click();
   // Closing is the acknowledgement; a rejected save leaves it open with a reason.
-  if (expectSaved) await expect(panel).toBeHidden();
+  if (opts.expectSaved ?? true) await expect(panel).toBeHidden();
 }
 
 /**
@@ -414,12 +440,12 @@ test.describe("the mother corrects what she entered", () => {
     const before = await agenda(page).getByText("Trampoline").count();
     expect(before).toBeGreaterThanOrEqual(5);
 
-    // The panel says as much before you press Save.
+    // The panel names the repeat, and offers the scope before you commit to it.
     await agenda(page).getByRole("button", { name: "Edit Trampoline", exact: true }).first().click();
-    await expect(editPanel(page)).toContainText("part of a weekly repeat");
+    await expect(editPanel(page)).toContainText("every ");
     await editPanel(page).getByLabel("Start time").fill("06:15");
     await editPanel(page).getByLabel("End time").fill("07:15");
-    await editPanel(page).getByRole("button", { name: "Save changes" }).click();
+    await editPanel(page).getByRole("button", { name: "Save this week", exact: true }).click();
     await expect(editPanel(page)).toBeHidden();
 
     // Same number of weeks, one of them moved.
@@ -509,11 +535,106 @@ test.describe("the mother corrects what she entered", () => {
 
     // Next week's occurrence already owns this slot, and (series_id, starts_at)
     // is unique — the one collision a single-occurrence edit can produce.
-    await editActivity(page, "Skating", { day: shiftDay(todayKey(), 7) }, false);
+    await editActivity(
+      page,
+      "Skating",
+      { day: shiftDay(todayKey(), 7) },
+      { save: "Save this week", expectSaved: false },
+    );
     await expect(editPanel(page).getByRole("alert")).toHaveText("There is already one at that time");
 
     await editPanel(page).getByRole("button", { name: "Cancel" }).click();
     await expect(agenda(page).getByRole("listitem").filter({ hasText: "Skating" }).first()).toContainText("05:00–06:00");
+  });
+});
+
+test.describe("the mother corrects the whole repeat", () => {
+  /** Every visible time for one title, in agenda order. */
+  async function timesOf(page: Page, title: string): Promise<string[]> {
+    const rows = agenda(page).getByRole("listitem").filter({ hasText: title });
+    const out: string[] = [];
+    for (const row of await rows.all()) {
+      out.push((await row.innerText()).match(/\d{2}:\d{2}–\d{2}:\d{2}/)?.[0] ?? "");
+    }
+    return out;
+  }
+
+  test("every week still to come moves, and what already happened does not", async ({ page }) => {
+    // Anchored two hours ago, so the first occurrence is behind us.
+    const past = slotAround(-120);
+    await addActivity(page, { child: "Beatrix", title: "Rugby", ...past, weekly: true });
+    const before = await timesOf(page, "Rugby");
+    expect(before.length).toBeGreaterThanOrEqual(5);
+
+    await editActivity(page, "Rugby", { start: "06:40", end: "07:40" }, { save: "Save all weeks" });
+
+    // Forward-looking, exactly as stopping a repeat is. Whether one occurrence
+    // is in the past depends on the hour the suite runs at, so the assertion is
+    // a ceiling rather than an exact number.
+    const after = await timesOf(page, "Rugby");
+    expect(after.filter((t) => t === "06:40–07:40").length).toBeGreaterThanOrEqual(before.length - 1);
+    expect(after.filter((t) => t !== "06:40–07:40").length).toBeLessThanOrEqual(1);
+  });
+
+  test("a week corrected on its own keeps what it was given", async ({ page }) => {
+    await addActivity(page, { child: "Beatrix", title: "Waltz", ...slotAround(120), weekly: true });
+
+    // Second week only — the pool is shut that afternoon.
+    await editActivity(page, "Waltz", { start: "08:05", end: "09:05" }, { nth: 1, save: "Save this week" });
+    expect((await timesOf(page, "Waltz")).filter((t) => t === "08:05–09:05")).toHaveLength(1);
+
+    // Now the whole thing moves. The corrected week is the one row that must
+    // not follow, or a deliberate change is undone with nothing on screen to
+    // say so.
+    await editActivity(page, "Waltz", { start: "10:10", end: "11:10" }, { save: "Save all weeks" });
+
+    const after = await timesOf(page, "Waltz");
+    expect(after.filter((t) => t === "08:05–09:05")).toHaveLength(1);
+    expect(after.filter((t) => t === "10:10–11:10").length).toBeGreaterThanOrEqual(4);
+  });
+
+  test("a different day withdraws the choice rather than ignoring it", async ({ page }) => {
+    await addActivity(page, { child: "Beatrix", title: "Choir", ...slotAround(180), weekly: true });
+
+    await agenda(page).getByRole("button", { name: "Edit Choir", exact: true }).first().click();
+    const panel = editPanel(page);
+    await expect(panel.getByRole("button", { name: "Save all weeks" })).toBeEnabled();
+
+    await panel.getByLabel("Date").fill(shiftDay(todayKey(), 2));
+    await expect(panel.getByRole("button", { name: "Save all weeks" })).toBeDisabled();
+    await expect(panel).toContainText("delete the repeat and add it again");
+
+    // This week alone is still on offer, and still works.
+    await expect(panel.getByRole("button", { name: "Save this week" })).toBeEnabled();
+    await panel.getByRole("button", { name: "Cancel" }).click();
+  });
+
+  test("a shared repeat moves for everyone on it", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, {
+      children: ["Beatrix", "Rex"],
+      title: "Diving",
+      ...slotAround(240),
+      weekly: true,
+    });
+    await editActivity(page, "Diving", { start: "12:20", end: "13:20" }, { save: "Save all weeks" });
+
+    // One series per member, so the walk across the group is its own code path.
+    for (const name of ["Beatrix", "Rex"]) {
+      await agenda(page).getByRole("button", { name, exact: true }).click();
+      const times = await timesOf(page, "Diving");
+      expect(times.length).toBeGreaterThanOrEqual(4);
+      expect(times.every((t) => t === "12:20–13:20")).toBe(true);
+    }
+    await agenda(page).getByRole("button", { name: "All", exact: true }).click();
+  });
+
+  test("a one-off has no all-weeks button to press", async ({ page }) => {
+    await addActivity(page, { child: "Beatrix", title: "Bowls", day: todayKey(), start: "04:00", end: "05:00" });
+    await agenda(page).getByRole("button", { name: "Edit Bowls", exact: true }).click();
+    await expect(editPanel(page).getByRole("button", { name: "Save all weeks" })).toHaveCount(0);
+    await expect(editPanel(page).getByRole("button", { name: "Save changes" })).toBeVisible();
+    await editPanel(page).getByRole("button", { name: "Cancel" }).click();
   });
 });
 

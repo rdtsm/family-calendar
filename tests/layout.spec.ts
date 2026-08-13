@@ -195,13 +195,42 @@ test.describe("the form fits the phone it is used on", () => {
       expect(b.x + b.width, `${label} runs past the panel`).toBeLessThanOrEqual(box.x + box.width + 1);
     }
 
-    // Both ways out stay thumb-sized, side by side.
+    // Both ways out stay thumb-sized, and stacked rather than crowded — a
+    // repeat puts two save buttons on that row, so Cancel cannot share it.
     const save = (await panel.getByRole("button", { name: "Save changes" }).boundingBox())!;
     const cancel = (await panel.getByRole("button", { name: "Cancel" }).boundingBox())!;
     expect(save.height).toBeGreaterThanOrEqual(42);
     expect(cancel.height).toBeGreaterThanOrEqual(42);
-    expect(Math.abs(save.y - cancel.y)).toBeLessThan(4);
-    expect(cancel.x).toBeGreaterThan(save.x + save.width);
+    expect(cancel.y).toBeGreaterThan(save.y + save.height - 1);
+  });
+
+  test("a repeat's two save buttons hold their words side by side", async ({ page }) => {
+    await page.getByLabel("Activity").fill("Bocce");
+    await page.getByLabel("Date").fill(todayKey());
+    await page.getByRole("button", { name: "Every week", exact: true }).click();
+    await page.getByRole("button", { name: "Add every week" }).click();
+    await expect(page.getByRole("status")).toBeVisible();
+
+    await page
+      .getByRole("region", { name: "Coming up" })
+      .getByRole("button", { name: "Edit Bocce", exact: true })
+      .first()
+      .click();
+
+    const panel = page.getByRole("form", { name: "Edit activity" });
+    const week = (await panel.getByRole("button", { name: "Save this week" }).boundingBox())!;
+    const all = (await panel.getByRole("button", { name: "Save all weeks" }).boundingBox())!;
+
+    // Side by side, both tappable, and neither clipped by the panel it sits in.
+    expect(Math.abs(week.y - all.y)).toBeLessThan(4);
+    expect(all.x).toBeGreaterThan(week.x + week.width);
+    expect(week.height).toBeGreaterThanOrEqual(42);
+    expect(all.height).toBeGreaterThanOrEqual(42);
+
+    // A button whose label has wrapped or overflowed is taller than one line of
+    // padding allows — the failure two 17px labels would have produced here.
+    expect(week.height).toBeLessThan(60);
+    expect(all.height).toBeLessThan(60);
   });
 
   test("every chip stays big enough to hit", async ({ page }) => {

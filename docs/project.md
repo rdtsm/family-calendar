@@ -915,13 +915,60 @@ has to be the last thing that happens before submit.
 another week of the same repeat, which the unique `(series_id, starts_at)` index refuses. It is
 reported as *"There is already one at that time"* rather than surfacing as a 500.
 
-Deferred: editing a whole series at once. It needs the series row updated alongside every future
-occurrence, and a date field that means something different in that mode — real work, and worth
-doing only once single-occurrence editing has been lived with.
+#### Correcting the whole repeat
+
+*Added 2026-08-13, once single-occurrence editing was in use.* A repeat now offers the same two
+scopes deletion does — *this week* or *every week* — and **every week keeps the weekday**.
+
+**Why not delete and recreate the series, as a parent would by hand.** It was the obvious algorithm
+and it is genuinely cheaper: the creation path already exists, and a weekday change would come free,
+because generating a fresh series from `expand()` cannot collide with the unique
+`(series_id, starts_at)` index and sets `materialised_through` correctly by construction. It was
+rejected on what the new event ids cost:
+
+- **The ICS `UID` is the event id** (`lib/ics.ts`). Subscribed feeds are full-state documents with
+  `METHOD:PUBLISH`, so a changed UID is a removal plus an addition rather than a modification.
+  Apple and Google reconcile that correctly; Outlook is documented as unreliable at propagating
+  removals from an internet calendar, which is the one client an in-place update never asks to
+  remove anything.
+- **The send-once ledger inverts.** New ids carry no claims, so the *scheduler* re-announces
+  anything inside a lead window whether or not the time changed — a second buzz for a corrected
+  typo, arriving from cron rather than from the action.
+- **Reusing the old ids does not rescue it.** It can be done — ids are application-generated — but
+  it forces ordinal pairing of old occurrences to new, which is the in-place update rewritten; and
+  the primary key makes create-before-delete impossible, so the safe failure ordering (worst case a
+  visible duplicate) is lost with it.
+
+Without the free weekday change, the trade reverses: in-place is ~45 lines more and buys a stable
+UID, no Outlook exposure, and exception preservation for nearly nothing. So the weekday stays put,
+and the form withdraws *every week* the moment the date is changed rather than ignoring it.
+
+**A week corrected on its own is left alone, and it costs no schema.** Every occurrence is created
+from its series row, so an occurrence whose title, place or wall-clock time no longer matches that
+row *is* the record of a deliberate correction. Comparing the two is the whole detection. Wall clock
+rather than the instant, because `wallToInstant` preserves local time across a daylight-saving
+change and only the wall clock is stable.
+
+**`group_id` names the activity, not the occurrence — and that was a live bug.** A shared weekly
+repeat carries one group id across all fifty-two weeks, because creation assigns it once and stamps
+every row with it. `deleteEvent` matched on `group_id` alone, so **"delete this event" on one week
+of a shared repeat deleted the entire term for both children.** Shipped, live, and found only
+because a series test finally combined *shared* with *weekly* — each had been tested alone. Both
+delete and update now match `group_id` **and** `starts_at`, which is what identifies one occurrence.
+The lesson is the ordinary one about coverage: two independent flags need a test where both are set.
+
+**A server action does not receive the submit button's `name` and `value`.** The scope was going to
+ride on `<button name="scope" value="series">`, and every save silently behaved as *this week*.
+React state cannot carry it either — the click that sets the state is the click that submits. What
+works is an *uncontrolled* hidden input written through a ref in the click handler; `defaultValue`
+is what stops React restoring it. Note the symmetry with the forged-id test above: **a controlled
+input is restored on every render, an uncontrolled one is not**, and both facts are the same fact.
+
+Still deferred: moving a repeat to another weekday.
 
 ## 6. Testing
 
-106 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
+113 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
 shares a single database within a run, so a reused name silently doubles a count and the failure
 looks like a bug in the feature rather than in the fixture. It has cost time three times.
 

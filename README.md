@@ -61,7 +61,7 @@ cp .env.example .env.local     # PARENT_PIN and SESSION_SECRET are enough to sta
 npm run db:push                # create the tables
 npm run db:seed                # add a first child, prints their link
 npm run dev                    # http://localhost:3000/parent
-npm test                       # 106 tests against an isolated database
+npm test                       # 113 tests against an isolated database
 ```
 
 ## 1.2 Deploy to Cloudflare
@@ -345,9 +345,12 @@ Notifications require HTTPS on both platforms — a deployment satisfies this, a
 
 ## Known limitations
 
-- **Edit is one occurrence at a time.** Tapping a row corrects what, when and where. Not who, and
-  not the repeat — both mean adding or removing rows, and both stay delete-and-re-add. Correcting
-  one week of a weekly activity changes that week only, and the panel says so before you save.
+- **Edit covers what, when and where — not who.** Adding or removing a person still means deleting
+  and re-adding. Tapping a row opens it; a repeat offers *this week* or *every week*.
+- **A repeat keeps its weekday.** *Every week* changes the times, the title and the place, never the
+  day. Moving swimming from Tuesdays to Thursdays means deleting the repeat and adding it again —
+  the panel withdraws the choice and says so rather than ignoring the date you typed. A week you
+  corrected on its own is left alone by *every week*, and keeps what you gave it.
 - **One timezone for the whole family.** Correct for a household, wrong for a child at boarding
   school abroad.
 - **Weekly recurrence only, one weekday at a time.** "Tuesdays and Thursdays" is two entries. There
@@ -397,8 +400,8 @@ Notifications require HTTPS on both platforms — a deployment satisfies this, a
 
 - [ ] [One-click install](docs/project.md#8-reaching-households-without-a-developer) — self-provisioning
       first run, so no terminal and no environment variables
-- [ ] [Edit a whole series at once](docs/project.md#516-correcting-an-activity) — times, title and
-      location across every future occurrence
+- [ ] [Move a repeat to another weekday](docs/project.md#516-correcting-an-activity) without
+      deleting and re-adding it
 - [ ] Voice entry: *"Beatrix boxing 3 to 4 the next four Tuesdays"* → parsed event
 - [ ] [Collapse a weekly run into one agenda row](docs/project.md#58-deferred-collapsing-a-weekly-run-into-one-agenda-row) that expands on tap
 - [ ] Notify a parent — an activity ticked off, or one that passed untouched. Needs a second

@@ -32,7 +32,11 @@ create table if not exists events (
   ends_at    text not null,
   series_id  text,
   -- Shared by the rows of one multi-member activity. Null when only one
-  -- member is on it. See docs/project.md 5.10.
+  -- member is on it. See docs/project.md 5.9.
+  --
+  -- It names the *activity*, not the occurrence: a shared weekly repeat wears
+  -- one group id across all fifty-two weeks. Anything acting on a single
+  -- occurrence has to match starts_at as well, or it reaches the whole term.
   group_id   text,
   -- 'parent' or 'child'. A child's own entries never leave their own screen:
   -- the parent agenda and the adult feeds both filter to 'parent'.

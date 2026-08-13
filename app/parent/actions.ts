@@ -21,6 +21,7 @@ import {
   renameChild,
   rotateChildToken,
   updateEventGroup,
+  updateSeriesGroup,
 } from "@/lib/queries";
 import { clearFailures, lockedFor, recordFailure } from "@/lib/ratelimit";
 import { childById, eventById } from "@/lib/queries";
@@ -139,15 +140,50 @@ export async function addEventAction(_prev: FormState, form: FormData): Promise<
 }
 
 /**
+ * Announces occurrences that have just moved into a reminder window.
+ *
+ * Same reasoning as creation: something moved to a time that is already
+ * imminent would otherwise wait for a scheduler tick that may not come before
+ * it starts. Callers clear the ledger first, so this announces the new time
+ * rather than repeating the old one.
+ */
+function announceMoved(ids: string[], title: string, emoji: string, location: string | null) {
+  after(async () => {
+    for (const eventId of ids) {
+      try {
+        const ev = await eventById(eventId);
+        if (!ev) continue;
+        const child = await childById(ev.child_id);
+        // Adults have no device to push to; their calendar is the reminder.
+        if (!child || child.kind !== "child") continue;
+        const r = await sendDueReminder({
+          id: ev.id,
+          title,
+          emoji,
+          location,
+          starts_at: ev.starts_at,
+          child_id: ev.child_id,
+          token: child.token,
+        });
+        if (r.errors.length) console.error(`edited reminder: ${r.errors.join(", ")}`);
+      } catch (err) {
+        console.error("edited reminder failed", err);
+      }
+    }
+  });
+}
+
+/**
  * Corrects an activity already on the calendar: what, when, where.
  *
- * Not who, and not the repeat. Both are structural — who means adding and
- * removing rows of a group, the repeat means creating or ending a series — and
- * both stay delete-and-re-add, which already handles them. This is the
- * correction a rushed household actually makes: the wrong time, or a typo.
+ * Not who — adding or removing a person means adding or removing rows of a
+ * group, which stays delete-and-re-add.
  *
- * A repeat is edited one occurrence at a time. The form says so before you
- * press Save, so nobody presses it expecting every Tuesday to move.
+ * `scope` mirrors deletion's: this occurrence, or the whole repeat. A repeat
+ * keeps its weekday either way. Moving one is a different operation — it would
+ * collide with the unique (series_id, starts_at) index partway through and
+ * leave `materialised_through` describing a runway that no longer exists — so
+ * the form withdraws the choice and says why rather than ignoring the date.
  */
 export async function editEventAction(_prev: FormState, form: FormData): Promise<FormState> {
   await requireParent();
@@ -174,18 +210,48 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
   const before = await eventById(id);
   if (!before || before.created_by !== "parent") return { error: "That activity is no longer there" };
 
+  const emojiOf = emojiFor(title);
+
+  if (String(form.get("scope") ?? "one") === "series") {
+    if (!before.series_id) return { error: "That activity is not a repeat" };
+    // The form disables this combination; the guard is here because the form is
+    // not the boundary.
+    if (day !== dayKeyOf(before.starts_at)) {
+      return { error: "A different day applies to this week only" };
+    }
+
+    const { moved: movedRows } = await updateSeriesGroup(
+      before.series_id,
+      { title, emoji: emojiOf, location, startTime: start, endTime: end },
+      new Date(),
+    );
+
+    if (movedRows.length) {
+      await clearReminderLedger(movedRows.map((m) => m.id));
+      // At most one week is ever inside a lead window, so this is a filter, not
+      // a fan-out of fifty-two notifications.
+      const imminent = movedRows
+        .filter((m) => minutesUntil(m.startsAt) > 0 && minutesUntil(m.startsAt) <= OUTER_LEAD)
+        .map((m) => m.id);
+      if (imminent.length) announceMoved(imminent, title, emojiOf, location);
+    }
+
+    revalidatePath("/parent");
+    revalidatePath("/k", "layout");
+    return { ok: "Saved, every week" };
+  }
+
   // One occurrence, through the same expansion the create path uses, so the
   // past-midnight rule and the daylight-saving conversion are inherited rather
   // than restated here and allowed to disagree.
   const [when] = expand(day, start, end, false, today);
   const moved = when.startsAt.getTime() !== new Date(before.starts_at).getTime();
-  const emoji = emojiFor(title);
 
   let ids: string[];
   try {
     ids = await updateEventGroup(id, {
       title,
-      emoji,
+      emoji: emojiOf,
       location,
       startsAt: when.startsAt,
       endsAt: when.endsAt,
@@ -201,35 +267,8 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
 
   if (moved) {
     await clearReminderLedger(ids);
-
-    // Same reasoning as creation: an activity moved into a reminder window would
-    // otherwise wait for a scheduler tick that may not come before it starts.
-    // The ledger was just cleared, so this is the announcement of the new time
-    // rather than a repeat of the old one.
     if (minutesUntil(when.startsAt) > 0 && minutesUntil(when.startsAt) <= OUTER_LEAD) {
-      after(async () => {
-        for (const eventId of ids) {
-          try {
-            const ev = await eventById(eventId);
-            if (!ev) continue;
-            const child = await childById(ev.child_id);
-            // Adults have no device to push to; their calendar is the reminder.
-            if (!child || child.kind !== "child") continue;
-            const r = await sendDueReminder({
-              id: ev.id,
-              title,
-              emoji,
-              location,
-              starts_at: ev.starts_at,
-              child_id: ev.child_id,
-              token: child.token,
-            });
-            if (r.errors.length) console.error(`edited reminder: ${r.errors.join(", ")}`);
-          } catch (err) {
-            console.error("edited reminder failed", err);
-          }
-        }
-      });
+      announceMoved(ids, title, emojiOf, location);
     }
   }
 
