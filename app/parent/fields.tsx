@@ -94,16 +94,23 @@ export function WhenFields({
   return (
     <>
       <div className="space-y-2">
-        <label className="block rounded-2xl bg-raised px-4 py-2">
-          <span className="block text-[13px] font-semibold text-fg-3">Date</span>
-          <input
-            type="date"
-            value={day}
-            onChange={(e) => e.target.value && setDay(e.target.value)}
-            aria-label="Date"
-            className="max-w-full bg-transparent text-[17px] outline-none"
-          />
-        </label>
+        {/* One column of the same two-column grid the times use, so the three
+            fields are one module wide. A field should be as wide as the value
+            it expects: a date is ten fixed characters, and giving it the full
+            card left it two-thirds empty. What and Where stay full width
+            because free text has no length to size to. */}
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block rounded-2xl bg-raised px-4 py-2">
+            <span className="block text-[13px] font-semibold text-fg-3">Date</span>
+            <input
+              type="date"
+              value={day}
+              onChange={(e) => e.target.value && setDay(e.target.value)}
+              aria-label="Date"
+              className="max-w-full bg-transparent text-[17px] outline-none"
+            />
+          </label>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="block rounded-2xl bg-raised px-4 py-2">
             <span className="block text-[13px] font-semibold text-fg-3">Start</span>

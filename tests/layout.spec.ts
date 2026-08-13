@@ -85,7 +85,10 @@ test.describe("the form fits the phone it is used on", () => {
     // layout that was correct.
     const gap = await group.evaluate((el) => parseFloat(getComputedStyle(el).columnGap) || 6);
 
-    const inner = (await page.getByLabel("Date").locator("xpath=..").boundingBox())!.width;
+    // The width the chips actually wrap in, read from their own container. It
+    // used to come from the date pill, which stopped being the card's full
+    // width the moment that pill was narrowed to match the time fields.
+    const inner = (await group.boundingBox())!.width;
     let rows = 1;
     let used = 0;
     for (const b of boxes) {
@@ -113,17 +116,22 @@ test.describe("the form fits the phone it is used on", () => {
     }
   });
 
-  test("the date pill fills its row, and its chevron follows the value", async ({ page }) => {
-    // The pill spans the card; the input inside it is only as wide as the date,
-    // so the browser's picker chevron lands beside the value rather than at the
-    // far edge of the card. Relying on the input itself to stretch is what left
-    // it ending mid-card on one Android browser.
+  test("the date pill is one module wide, and its chevron follows the value", async ({ page }) => {
+    // Three fields of one width: a date is ten fixed characters, and the full
+    // card left it two-thirds empty. The input inside is only as wide as the
+    // value, so the browser's picker chevron lands beside it rather than at the
+    // far edge — relying on the input to stretch is what left it ending
+    // mid-card on one Android browser.
     const pill = (await page.getByLabel("Date").locator("xpath=..").boundingBox())!;
     const input = (await page.getByLabel("Date").boundingBox())!;
+    const start = (await page.getByLabel("Start time").locator("xpath=..").boundingBox())!;
     const activity = (await page.getByLabel("Activity").boundingBox())!;
 
-    expect(pill.width).toBeGreaterThan(activity.width * 0.9);
-    expect(input.width).toBeLessThan(pill.width * 0.75);
+    expect(Math.abs(pill.width - start.width)).toBeLessThan(2);
+    expect(pill.x).toBeCloseTo(start.x, 0);
+    // Narrower than the free-text fields, which is the whole point.
+    expect(pill.width).toBeLessThan(activity.width * 0.75);
+    expect(input.width).toBeLessThan(pill.width);
   });
 
   test("start and end are two fields, each labelled and each tappable", async ({ page }) => {
