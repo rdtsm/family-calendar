@@ -171,6 +171,68 @@ export default function KidDay({ child, events, today, initialDay, daysBack, day
   // act on something cancelled hours ago with nothing on screen to say so. So
   // offline is stated, and with an age rather than a vague "offline".
   const [offline, setOffline] = useState(false);
+
+  /*
+   * How far the child's clock sits from the server's, in milliseconds.
+   *
+   * `renderedAt` is stamped by the Worker; `Date.now()` is the phone. Comparing
+   * them directly asks a question neither clock was asked, and a phone running
+   * four minutes fast answered it by reporting every freshly rendered page as
+   * four minutes stale — the banner on a live page, on every load, with no way
+   * back, because an installed app has no reload. Measured once against the
+   * server's own `Date` header, the two become comparable.
+   *
+   * Note the asymmetry that hid this: a phone running *slow* was already safe,
+   * because `ageOf` clamps a negative age to zero. Only a fast one broke.
+   */
+  const [skew, setSkew] = useState(0);
+  const [synced, setSynced] = useState(false);
+
+  useEffect(() => {
+    /*
+     * The manifest is the cheapest thing on the origin that is genuinely the
+     * child's, and the worker leaves it alone — it is neither a navigation nor
+     * an immutable asset, so this reaches the network or it fails. Failing *is*
+     * the answer: no reply from the server is what offline means, which the
+     * age of a document could only ever guess at.
+     */
+    let live = true;
+    const measure = async () => {
+      const abort = new AbortController();
+      // The worker's own reasoning, and its number: a slow network is commoner
+      // than no network, and a child should not wait half a minute to be told.
+      const timer = setTimeout(() => abort.abort(), 3000);
+      try {
+        const res = await fetch(`/k/${child.token}/manifest.webmanifest`, {
+          cache: "no-store",
+          signal: abort.signal,
+        });
+        const date = res.headers.get("date");
+        if (!live) return;
+        if (date) {
+          setSkew(new Date(date).getTime() - Date.now());
+          setSynced(true);
+        }
+        setOffline(false);
+      } catch {
+        // Aborted, refused, or DNS gone: the server did not answer.
+        if (live) setOffline(true);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    measure();
+    // Clocks drift slowly; this is a correction, not a heartbeat.
+    const resync = setInterval(measure, 300_000);
+    window.addEventListener("online", measure);
+    return () => {
+      live = false;
+      clearInterval(resync);
+      window.removeEventListener("online", measure);
+    };
+  }, [child.token]);
+
   useEffect(() => {
     /*
      * Two independent signals, because neither is sufficient alone.
@@ -183,8 +245,14 @@ export default function KidDay({ child, events, today, initialDay, daysBack, day
      * browser believes about connectivity.
      */
     const check = () => {
-      const age = Date.now() - new Date(renderedAt).getTime();
-      setOffline(navigator.onLine === false || age > 90_000);
+      if (navigator.onLine === false) {
+        setOffline(true);
+        return;
+      }
+      // Without a shared clock there is no honest verdict to give, and the
+      // probe above is already deciding reachability on its own.
+      if (!synced) return;
+      setOffline(Date.now() + skew - new Date(renderedAt).getTime() > 90_000);
     };
     check();
     const tick = setInterval(check, 10_000);
@@ -195,7 +263,7 @@ export default function KidDay({ child, events, today, initialDay, daysBack, day
       window.removeEventListener("online", check);
       window.removeEventListener("offline", check);
     };
-  }, [renderedAt]);
+  }, [renderedAt, skew, synced]);
 
   function remove(e: KidEvent) {
     if (offline) return;
@@ -259,7 +327,7 @@ export default function KidDay({ child, events, today, initialDay, daysBack, day
         </div>
       </header>
 
-      {offline && <OfflineNotice renderedAt={renderedAt} />}
+      {offline && <OfflineNotice renderedAt={renderedAt} skew={skew} />}
       <InstallHint accent={a} />
 
       {editingLook && (
@@ -670,8 +738,8 @@ function AddOwn({ token, day, accentColor }: { token: string; day: DayKey; accen
 }
 
 /** How stale the snapshot is, in words a child reads without thinking. */
-function ageOf(renderedAt: string): string {
-  const mins = Math.max(0, Math.round((Date.now() - new Date(renderedAt).getTime()) / 60_000));
+function ageOf(renderedAt: string, skew: number): string {
+  const mins = Math.max(0, Math.round((Date.now() + skew - new Date(renderedAt).getTime()) / 60_000));
   if (mins < 2) return "just now";
   if (mins < 60) return `${mins} minutes ago`;
   const hours = Math.round(mins / 60);
@@ -680,12 +748,12 @@ function ageOf(renderedAt: string): string {
   return days === 1 ? "yesterday" : `${days} days ago`;
 }
 
-function OfflineNotice({ renderedAt }: { renderedAt: string }) {
+function OfflineNotice({ renderedAt, skew }: { renderedAt: string; skew: number }) {
   return (
     <section aria-label="Offline" className="mx-4 mb-3 rounded-3xl bg-card p-4">
       <p className="text-[17px] font-bold">You are offline</p>
       <p className="mt-1 text-[15px] text-fg-2">
-        This is how your day looked {ageOf(renderedAt)}. It may have changed since.
+        This is how your day looked {ageOf(renderedAt, skew)}. It may have changed since.
       </p>
     </section>
   );

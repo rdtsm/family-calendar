@@ -685,6 +685,48 @@ test.describe("the kid's day", () => {
     await kid.close();
   });
 
+  test("a phone whose clock runs fast is not told it is offline", async ({ page, context }) => {
+    /*
+     * The banner used to be inferred by subtracting a server timestamp from
+     * Date.now() — two different clocks. A phone four minutes fast reported
+     * every freshly rendered page as four minutes stale, showed the banner on a
+     * live page, and could never clear it: an installed app has no reload.
+     *
+     * Nothing in the suite could have caught it, because every test runs with
+     * one clock. This one gives the browser its own.
+     */
+    const link = await kidLink(page, "Beatrix");
+    const kid = await context.newPage();
+    await kid.addInitScript(() => {
+      const SKEW = 4 * 60 * 1000;
+      const Real = Date;
+      class Fast extends Real {
+        constructor(...args: unknown[]) {
+          // @ts-expect-error a stand-in for a mis-set phone clock
+          super(...(args.length ? args : [Real.now() + SKEW]));
+        }
+        static now() {
+          return Real.now() + SKEW;
+        }
+      }
+      // @ts-expect-error a stand-in for a mis-set phone clock
+      window.Date = Fast;
+    });
+
+    await kid.goto(link);
+    await expect(kid.getByRole("heading", { name: "Hi Beatrix" })).toBeVisible();
+    await expect(kid.getByRole("region", { name: "Offline" })).toHaveCount(0);
+
+    // And it stays clear once the staleness check has come round — the tick is
+    // 10s, so a shorter wait would pass without ever exercising it.
+    await kid.waitForTimeout(11_000);
+    await expect(kid.getByRole("region", { name: "Offline" })).toHaveCount(0);
+
+    // The controls a wrong banner would have withdrawn are still there.
+    await expect(kid.getByRole("button", { name: "+ Add your own" })).toBeVisible();
+    await kid.close();
+  });
+
   test("a free day says so rather than showing an empty list", async ({ page, context }) => {
     const kid = await context.newPage();
     await kid.goto(await kidLink(page, "Beatrix"));

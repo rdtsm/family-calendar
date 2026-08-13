@@ -790,6 +790,30 @@ Deliberately not adopted: Workbox, which would add a dependency to replace eight
 written and understood, and Navigation Preload, which saves 50–200 ms of worker boot and is worth
 having only when something else brings us back into this file.
 
+#### Offline was decided by subtracting one clock from another
+
+*Fixed 2026-08-13.* The banner was inferred from the age of the document: `Date.now()` minus
+`renderedAt`. But `renderedAt` is stamped by the Worker and `Date.now()` is the child's phone, and a
+phone four minutes fast therefore reported every freshly rendered page as four minutes stale. It
+showed the banner on a live page, on every load, and **could never clear** — a home-screen app has
+no pull-to-refresh and no reload button, so there was no way out from inside it. While the banner
+was up, ticking off, removing and *Add your own* were all withdrawn: the app was gone, not merely
+mislabelled.
+
+Three things kept it hidden. The failure is asymmetric — `ageOf` clamps a negative age to zero, so a
+phone running *slow* was already safe and only a fast one broke. It is per-device, so it looked like
+one child's network. And **no test could have caught it**, because a test runs the browser and the
+server on one clock; the guard now gives the browser its own, via an `addInitScript` that shifts
+`Date` forward four minutes.
+
+The fix measures instead of inferring, which is this project's recurring lesson in a new place. A
+request to the child's own manifest returns the server's `Date` header, giving the offset between
+the two clocks; the staleness comparison then happens in one frame of reference. The same request
+doubles as the reachability test the age check was always a proxy for — no reply is what offline
+means — and it carries the worker's own three-second ceiling, for the worker's own reason. Until
+that first measurement lands, no verdict is given at all: `navigator.onLine === false` still shows
+the banner immediately, but a clock nobody has checked decides nothing.
+
 ### 5.14 A child's own entries, and who has opened their link
 
 **What a child can add.** One topic and one time, on the day they are looking at. No end time, no
@@ -968,7 +992,7 @@ Still deferred: moving a repeat to another weekday.
 
 ## 6. Testing
 
-113 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
+114 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
 shares a single database within a run, so a reused name silently doubles a count and the failure
 looks like a bug in the feature rather than in the fixture. It has cost time three times.
 
