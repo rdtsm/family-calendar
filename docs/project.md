@@ -814,6 +814,11 @@ means — and it carries the worker's own three-second ceiling, for the worker's
 that first measurement lands, no verdict is given at all: `navigator.onLine === false` still shows
 the banner immediately, but a clock nobody has checked decides nothing.
 
+Two refinements not taken: `Age` in the skew formula, which matters only if an intermediary caches
+the manifest; and correcting the app's own `now`, so a mis-set clock cannot shift *HAPPENING NOW* or
+the countdown either. Both small, neither load-bearing now the banner is measured rather than
+guessed.
+
 ### 5.14 A child's own entries, and who has opened their link
 
 **What a child can add.** One topic and one time, on the day they are looking at. No end time, no
