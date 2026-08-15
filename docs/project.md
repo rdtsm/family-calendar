@@ -995,6 +995,12 @@ input is restored on every render, an uncontrolled one is not**, and both facts 
 
 Still deferred: moving a repeat to another weekday.
 
+**One asymmetry left standing.** Editing an activity to a date beyond the 52-week horizon is
+refused, because past it the agenda simply stops loading and the move would read as a deletion.
+*Creating* a one-off out there is still allowed and has exactly that effect. It predates the edit
+work and needs a parent to type a date more than a year out, so it was left rather than widened into
+a change about something else — one line in `addEventAction` whenever it is worth taking.
+
 #### Changing who is on it
 
 *Added 2026-08-15.* The Who pills now open the edit panel, in the same order the create form
