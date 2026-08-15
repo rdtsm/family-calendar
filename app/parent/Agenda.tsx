@@ -102,7 +102,8 @@ export default function Agenda({ children, events, today }: { children: Child[];
                             endsAt: e.endsAt,
                             seriesId: e.seriesId,
                           }}
-                          who={names.join(" & ")}
+                          people={children}
+                          members={members.map((m) => m.childId)}
                           today={today}
                           onDone={stopEditing}
                         />

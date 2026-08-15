@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { PARENT_ACCENT } from "@/lib/colors";
 import { dayKeyOf, fmtTime, fmtWeekdayLong, type DayKey } from "@/lib/time";
-import { editEventAction, type FormState } from "./actions";
-import { Field, TitleField, WhenFields } from "./fields";
+import { editEventAction } from "./actions";
+import type { Child } from "@/lib/db";
+import { Field, TitleField, WhenFields, WhoField } from "./fields";
 
 /* One save button or two, they are the same button. 15px because two of them
    side by side have to hold their words at 360px. */
@@ -19,22 +20,35 @@ const ACCENT = { background: PARENT_ACCENT };
  * the thing being corrected stays in view, and a list a screen long does not
  * throw you to the top to change one number.
  *
- * A repeat offers the same two scopes deletion does. Who is stated, not
- * offered — see `editEventAction`.
+ * A repeat offers the same two scopes deletion does, and they govern who is on
+ * it as well as when it is — see `editEventAction`.
  */
 export default function EditEvent({
   event,
-  who,
+  people,
+  members,
   today,
   onDone,
 }: {
   event: { id: string; title: string; location: string | null; startsAt: string; endsAt: string; seriesId: string | null };
-  who: string;
+  /** Everyone who can be on an activity, in the same order the create form lists them. */
+  people: Child[];
+  /** Who is on this occurrence, which is what the pills open showing. */
+  members: string[];
   today: DayKey;
   onDone: () => void;
 }) {
-  const [state, action, pending] = useActionState<FormState, FormData>(editEventAction, {});
+  /*
+   * The result is handled in the submit closure rather than through
+   * useActionState, because moving an activity to another day moves its row
+   * into a different day's list — React unmounts it, and any state holding the
+   * outcome goes with it. The panel then sat open on a save that had already
+   * succeeded. `onDone` belongs to the agenda, so it survives.
+   */
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startSaving] = useTransition();
   const originalDay = dayKeyOf(event.startsAt);
+  const [picked, setPicked] = useState<string[]>(members);
   const [title, setTitle] = useState(event.title);
   const [day, setDay] = useState<DayKey>(originalDay);
   const [start, setStart] = useState(fmtTime(event.startsAt));
@@ -45,11 +59,8 @@ export default function EditEvent({
     if (scope.current) scope.current.value = v;
   };
 
-  // The saved row is already on screen behind the panel, so there is nothing
-  // left to read here.
-  useEffect(() => {
-    if (state.ok) onDone();
-  }, [state.ok, onDone]);
+  const whoChanged =
+    picked.length !== members.length || picked.some((id) => !members.includes(id));
 
   /*
    * Escape closes it; tapping elsewhere does not. The delete confirmation
@@ -65,7 +76,19 @@ export default function EditEvent({
   }, [onDone]);
 
   return (
-    <form action={action} aria-label="Edit activity" className="space-y-4">
+    <form
+      action={(data) =>
+        startSaving(async () => {
+          const result = await editEventAction({}, data);
+          // The saved row is already on screen behind the panel, so there is
+          // nothing left to read on success.
+          if (result.ok) onDone();
+          else setError(result.error ?? null);
+        })
+      }
+      aria-label="Edit activity"
+      className="space-y-4"
+    >
       <input type="hidden" name="id" value={event.id} />
       <input type="hidden" name="day" value={day} />
       {/* Uncontrolled on purpose. The scope cannot ride on the submit button's
@@ -76,10 +99,18 @@ export default function EditEvent({
           React putting it back. */}
       <input ref={scope} type="hidden" name="scope" defaultValue="one" />
 
-      <p className="text-[15px] text-fg-2">
-        {who}
-        {event.seriesId && ` · every ${fmtWeekdayLong(originalDay)}`}
-      </p>
+      {/* Written only when the pills were touched. Otherwise correcting a time
+          from a week somebody guested on would silently drop them everywhere,
+          because the panel would be applying a membership nobody chose. */}
+      <input type="hidden" name="whoChanged" value={whoChanged ? "1" : "0"} />
+
+      {event.seriesId && (
+        <p className="text-[15px] text-fg-2">every {fmtWeekdayLong(originalDay)}</p>
+      )}
+
+      <Field label="Who">
+        <WhoField people={people} picked={picked} setPicked={setPicked} />
+      </Field>
 
       <Field label="What">
         <TitleField title={title} setTitle={setTitle} />
@@ -114,12 +145,12 @@ export default function EditEvent({
               delete confirmation. A repeat is one decision the screen has
               already taught once. */}
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => setScope("one")} disabled={pending} className={SAVE} style={ACCENT}>
+            <button onClick={() => setScope("one")} disabled={pending || !picked.length} className={SAVE} style={ACCENT}>
               Save this week
             </button>
             <button
               onClick={() => setScope("series")}
-              disabled={pending || day !== originalDay}
+              disabled={pending || !picked.length || day !== originalDay}
               className={SAVE}
               style={ACCENT}
             >
@@ -133,7 +164,7 @@ export default function EditEvent({
           </p>
         </div>
       ) : (
-        <button disabled={pending} className={`${SAVE} w-full`} style={ACCENT}>
+        <button disabled={pending || !picked.length} className={`${SAVE} w-full`} style={ACCENT}>
           {pending ? "Saving…" : "Save changes"}
         </button>
       )}
@@ -146,9 +177,9 @@ export default function EditEvent({
         Cancel
       </button>
 
-      {state.error && (
+      {error && (
         <p role="alert" className="text-center text-[15px] font-semibold text-kid-rose-ink">
-          {state.error}
+          {error}
         </p>
       )}
     </form>

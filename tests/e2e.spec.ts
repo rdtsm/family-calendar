@@ -359,7 +359,7 @@ const editPanel = (page: Page) => page.getByRole("form", { name: "Edit activity"
 async function editActivity(
   page: Page,
   title: string,
-  changes: { title?: string; day?: string; start?: string; end?: string; where?: string },
+  changes: { title?: string; day?: string; start?: string; end?: string; where?: string; who?: string[] },
   opts: { nth?: number; save?: string; expectSaved?: boolean } = {},
 ) {
   // A one-off says "Save changes"; a repeat asks which weeks instead.
@@ -371,6 +371,18 @@ async function editActivity(
   const panel = editPanel(page);
   await expect(panel).toBeVisible();
 
+  if (changes.who !== undefined) {
+    // A toggle set, exactly as in the create form: set the membership wanted
+    // rather than assuming a tap means "add".
+    const chips = panel.getByRole("group", { name: "Who" }).getByRole("button");
+    for (let i = 0; i < (await chips.count()); i++) {
+      const chip = chips.nth(i);
+      const label = ((await chip.textContent()) ?? "").trim();
+      const wanted = changes.who.some((w) => label.includes(w));
+      const pressed = (await chip.getAttribute("aria-pressed")) === "true";
+      if (wanted !== pressed) await chip.click();
+    }
+  }
   if (changes.title !== undefined) await panel.getByLabel("Activity").fill(changes.title);
   if (changes.day !== undefined) await panel.getByLabel("Date").fill(changes.day);
   if (changes.start !== undefined) await panel.getByLabel("Start time").fill(changes.start);
@@ -408,6 +420,21 @@ test.describe("the mother corrects what she entered", () => {
     await expect(row).toHaveCount(1);
     await expect(row).toContainText("11:00–12:00");
     await expect(row).toContainText("Studio");
+  });
+
+  test("moving it to another day still closes the panel", async ({ page }) => {
+    /*
+     * A row that changes day moves into a different day's list, so React
+     * unmounts it — and the panel with it. Holding the outcome in the panel's
+     * own state meant a save that had already succeeded left it sitting open,
+     * looking like it had failed. Only reproducible late enough in the day for
+     * the shift to cross midnight, which is why it hid for so long.
+     */
+    await addActivity(page, { child: "Beatrix", title: "Luge", day: todayKey(), start: "08:30", end: "09:30" });
+    await editActivity(page, "Luge", { day: shiftDay(todayKey(), 1) });
+
+    await expect(editPanel(page)).toHaveCount(0);
+    await expect(agenda(page).getByRole("listitem").filter({ hasText: "Luge" })).toHaveCount(1);
   });
 
   test("the correction reaches the child's app", async ({ page, context }) => {
@@ -545,6 +572,139 @@ test.describe("the mother corrects what she entered", () => {
 
     await editPanel(page).getByRole("button", { name: "Cancel" }).click();
     await expect(agenda(page).getByRole("listitem").filter({ hasText: "Skating" }).first()).toContainText("05:00–06:00");
+  });
+});
+
+test.describe("the mother changes who is on it", () => {
+  test("dad joins a one-off, and the row says so", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, { child: "Beatrix", title: "Zumba", day: todayKey(), start: "03:00", end: "04:00" });
+
+    await editActivity(page, "Zumba", { who: ["Beatrix", "Rex"] });
+
+    const row = agenda(page).getByRole("listitem").filter({ hasText: "Zumba" });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("Beatrix & Rex");
+  });
+
+  test("and can be taken off again, leaving the activity standing", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, {
+      children: ["Beatrix", "Rex"],
+      title: "Canoeing",
+      day: todayKey(),
+      start: "02:00",
+      end: "03:00",
+    });
+
+    await editActivity(page, "Canoeing", { who: ["Beatrix"] });
+    const row = agenda(page).getByRole("listitem").filter({ hasText: "Canoeing" });
+    await expect(row).toHaveCount(1);
+    await expect(row).not.toContainText("Rex");
+  });
+
+  test("nobody at all is a deletion, so the save is withheld", async ({ page }) => {
+    await addActivity(page, { child: "Beatrix", title: "Snooker", day: todayKey(), start: "01:00", end: "02:00" });
+
+    await agenda(page).getByRole("button", { name: "Edit Snooker", exact: true }).click();
+    const panel = editPanel(page);
+    await panel.getByRole("group", { name: "Who" }).getByRole("button", { name: /Beatrix/ }).click();
+    await expect(panel.getByRole("button", { name: "Save changes" })).toBeDisabled();
+
+    await panel.getByRole("button", { name: "Cancel" }).click();
+    await expect(agenda(page).getByText("Snooker")).toHaveCount(1);
+  });
+
+  test("a guest on one week of a repeat is on that week only", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, { child: "Beatrix", title: "Darts", ...slotAround(150), weekly: true });
+    const weeks = await agenda(page).getByText("Darts").count();
+    expect(weeks).toBeGreaterThanOrEqual(5);
+
+    await editActivity(page, "Darts", { who: ["Beatrix", "Rex"] }, { save: "Save this week" });
+
+    // One week gains him; the rest are untouched, and the count is unchanged
+    // because the agenda collapses a shared activity into one line.
+    await expect(agenda(page).getByText("Darts")).toHaveCount(weeks);
+    await expect(
+      agenda(page).getByRole("listitem").filter({ hasText: "Darts" }).filter({ hasText: "Rex" }),
+    ).toHaveCount(1);
+  });
+
+  test("a guest promoted to every week keeps the weeks he already had", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, { child: "Beatrix", title: "Handball", ...slotAround(210), weekly: true });
+    const weeks = await agenda(page).getByText("Handball").count();
+
+    // Guest first...
+    await editActivity(page, "Handball", { who: ["Beatrix", "Rex"] }, { save: "Save this week" });
+    // ...then made permanent, from a week he is *not* on — which is also the
+    // only way the pills differ from what is already there. The week he already
+    // had must not be doubled: he is filled in only where he is missing.
+    await editActivity(page, "Handball", { who: ["Beatrix", "Rex"] }, { nth: 1, save: "Save all weeks" });
+
+    await expect(agenda(page).getByText("Handball")).toHaveCount(weeks);
+    await expect(
+      agenda(page).getByRole("listitem").filter({ hasText: "Handball" }).filter({ hasText: "Rex" }),
+    ).toHaveCount(weeks);
+  });
+
+  test("a guest is carried along when the whole repeat moves", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, { child: "Beatrix", title: "Fishing", ...slotAround(270), weekly: true });
+
+    await editActivity(page, "Fishing", { who: ["Beatrix", "Rex"] }, { save: "Save this week" });
+    // He has no series of his own. A walk by series_id would move Beatrix and
+    // strand him — same group, same day, two different times, and the agenda
+    // showing only the first.
+    await editActivity(page, "Fishing", { start: "23:10", end: "23:50" }, { save: "Save all weeks" });
+
+    const guested = agenda(page)
+      .getByRole("listitem")
+      .filter({ hasText: "Fishing" })
+      .filter({ hasText: "Rex" });
+    await expect(guested).toHaveCount(1);
+    await expect(guested).toContainText("23:10–23:50");
+  });
+
+  test("stopping the repeat takes the guest with it", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, { child: "Beatrix", title: "Falconry", ...slotAround(300), weekly: true });
+    await editActivity(page, "Falconry", { who: ["Beatrix", "Rex"] }, { save: "Save this week" });
+
+    const row = agenda(page).getByRole("listitem").filter({ hasText: "Falconry" }).first();
+    await row.getByRole("button", { name: "Delete event" }).click();
+    await row.getByRole("button", { name: "All events" }).click();
+
+    // A guest has no series to end, so ending them all would leave him holding
+    // an activity nobody else is at.
+    await expect.poll(() => agenda(page).getByText("Falconry").count()).toBeLessThanOrEqual(1);
+  });
+
+  test("correcting a time from a guest's week does not drop anyone", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, { child: "Beatrix", title: "Croquet", ...slotAround(330), weekly: true });
+    await editActivity(page, "Croquet", { who: ["Beatrix", "Rex"] }, { save: "Save this week" });
+
+    // The panel opens on a week Rex is *not* on. Saving all weeks writes the
+    // time and must leave membership alone — writing the pills unconditionally
+    // would remove him from the week he has.
+    await editActivity(page, "Croquet", { start: "22:05", end: "22:45" }, { nth: 1, save: "Save all weeks" });
+
+    await expect(
+      agenda(page).getByRole("listitem").filter({ hasText: "Croquet" }).filter({ hasText: "Rex" }),
+    ).toHaveCount(1);
+  });
+
+  test("the new member sees it on their own screen", async ({ page, context }) => {
+    await ensureChild(page, "Juno");
+    await addActivity(page, { child: "Beatrix", title: "Polo", ...todaySlot(5) });
+    await editActivity(page, "Polo", { who: ["Beatrix", "Juno"] });
+
+    const kid = await context.newPage();
+    await kid.goto(await kidLink(page, "Juno"));
+    await expect(schedule(kid).getByText("Polo")).toHaveCount(1);
+    await kid.close();
   });
 });
 
@@ -971,6 +1131,24 @@ test.describe("adults and their subscribe feeds", () => {
     expect(ics).toContain("Kendo");
     // Stored once per member, but a calendar must not show it twice.
     expect(ics.split("SUMMARY").filter((p) => p.includes("Sailing"))).toHaveLength(1);
+  });
+
+  test("a shared weekly activity reaches an observer once a week, not once", async ({ page, request }) => {
+    // group_id names the activity, not the occurrence, so a shared repeat wears
+    // one group id across every week. Deduping on it alone collapsed a whole
+    // term into a single entry in the watching adult's calendar.
+    await ensurePerson(page, "Tante", "observer");
+    await ensureChild(page, "Rex");
+    await addActivity(page, {
+      children: ["Beatrix", "Rex"],
+      title: "Biathlon",
+      ...slotAround(360),
+      weekly: true,
+    });
+
+    const ics = await (await request.get(await feedUrl(page, "Tante"))).text();
+    const occurrences = ics.split("SUMMARY").filter((s) => s.includes("Biathlon")).length;
+    expect(occurrences).toBeGreaterThanOrEqual(5);
   });
 
   test("the feed is valid iCalendar and says so in its headers", async ({ page, request }) => {

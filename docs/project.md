@@ -995,9 +995,56 @@ input is restored on every render, an uncontrolled one is not**, and both facts 
 
 Still deferred: moving a repeat to another weekday.
 
+#### Changing who is on it
+
+*Added 2026-08-15.* The Who pills now open the edit panel, in the same order the create form
+uses — Who, What, When, Where — and both scopes govern membership as well as time. Five rules,
+each a sentence:
+
+1. Membership is written only if the pills were touched. Otherwise correcting a time from a week
+   somebody guested on would apply a membership nobody chose and silently drop them everywhere.
+2. *This week* changes this occurrence.
+3. *All weeks* changes every occurrence still to come.
+4. Never retroactive — past weeks keep whoever was on them.
+5. At least one member; removing the activity is still the ✕.
+
+**Addition mirrors, it does not regenerate.** A new member is given the instants of the member whose
+row was tapped, rather than fresh ones computed from the pattern, so a week corrected on its own is
+joined at the time it actually has. `materialised_through` is copied from the reference series, so
+the scheduler tops both up in step. Removal is two statements — delete their future rows in the
+group, deactivate their series — which covers a regular, a guest, or somebody who is both.
+
+**Delete-and-recreate was reconsidered and again declined**, for the reasons in the previous
+section: the ICS UID is the event id, and Outlook is the client documented as unreliable at removals.
+
+**Adding somebody for one week leaves them without a series**, which is the point — they came on a
+Tuesday, they did not join the repeat. Two consequences had to be closed, and both were closed by
+following the group rather than the series: `updateSeriesGroup` walks one member's occurrences and
+writes to everyone present at each instant, so a guest is not stranded at the old time; and
+`endSeriesGroup` sweeps the group after ending every series, so a guest is not orphaned holding an
+activity nobody else is at.
+
+**Two live bugs surfaced while building it, both the same mistake in different clothes** — treating
+`group_id` as though it named the occurrence:
+
+- **An observer's feed collapsed a whole term into one entry.** `feedEvents` deduped on `group_id`
+  alone, and a shared weekly repeat wears one group id across all fifty-two weeks. Keyed on the group
+  *and the instant* now. Third instance of this after `deleteEvent` and `updateSeriesGroup`; the
+  schema comment on `group_id` now says so where it is defined.
+- **A save that succeeded left the panel open.** Moving an activity to another day moves its row into
+  a different day's list, so React unmounts it — and `useActionState` went with it, discarding the
+  result. The outcome is handled in the submit closure now, calling the agenda's own `onDone`, which
+  outlives the row. It hid because it only reproduces when the shift crosses midnight: the suite
+  passed all morning and failed at seven in the evening.
+
+**A trick worth keeping.** When a second person joins an activity that had none, the group id minted
+for them is *the first member's own event id* rather than a fresh one. The agenda keys a collapsed
+row on `group_id ?? id`, so any other value would change that key at exactly that moment and remount
+the row — the same unmount, arriving by a different route.
+
 ## 6. Testing
 
-114 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
+125 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
 shares a single database within a run, so a reused name silently doubles a count and the failure
 looks like a bug in the feature rather than in the fixture. It has cost time three times.
 

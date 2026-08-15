@@ -197,6 +197,16 @@ test.describe("the form fits the phone it is used on", () => {
 
     const panel = page.getByRole("form", { name: "Edit activity" });
     const box = (await panel.boundingBox())!;
+
+    // The panel sits one card deeper than the create form, so its Who chips have
+    // less room than the ones the chip guard is calibrated on. They are the same
+    // chips; this is where they are tightest.
+    for (const chip of await panel.getByRole("group", { name: "Who" }).getByRole("button").all()) {
+      const c = (await chip.boundingBox())!;
+      expect(c.height).toBeGreaterThanOrEqual(42);
+      expect(c.x + c.width, "a chip runs past the panel").toBeLessThanOrEqual(box.x + box.width + 1);
+    }
+
     for (const label of ["Activity", "Date", "Start time", "End time"]) {
       const b = (await panel.getByLabel(label).boundingBox())!;
       expect(b.x, `${label} starts left of the panel`).toBeGreaterThanOrEqual(box.x);

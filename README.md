@@ -61,7 +61,7 @@ cp .env.example .env.local     # PARENT_PIN and SESSION_SECRET are enough to sta
 npm run db:push                # create the tables
 npm run db:seed                # add a first child, prints their link
 npm run dev                    # http://localhost:3000/parent
-npm test                       # 114 tests against an isolated database
+npm test                       # 125 tests against an isolated database
 ```
 
 ## 1.2 Deploy to Cloudflare
@@ -345,8 +345,9 @@ Notifications require HTTPS on both platforms — a deployment satisfies this, a
 
 ## Known limitations
 
-- **Edit covers what, when and where — not who.** Adding or removing a person still means deleting
-  and re-adding. Tapping a row opens it; a repeat offers *this week* or *every week*.
+- **Edit covers who, what, when and where.** Tapping a row opens it; a repeat offers *this week* or
+  *every week*, for the people on it as much as the time. Somebody added to one week of a repeat is
+  on that week only, and can be promoted to every week later.
 - **A repeat keeps its weekday.** *Every week* changes the times, the title and the place, never the
   day. Moving swimming from Tuesdays to Thursdays means deleting the repeat and adding it again —
   the panel withdraws the choice and says so rather than ignoring the date you typed. A week you

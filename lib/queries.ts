@@ -288,56 +288,96 @@ export async function updateSeriesGroup(
   p: SeriesPatch,
   from: Date,
 ): Promise<{ moved: { id: string; startsAt: string }[] }> {
-  const head = await sql<{ group_id: string | null }>`select group_id from series where id = ${seriesId}`;
-  if (!head.length) return { moved: [] };
+  const head = await sql<{
+    group_id: string | null;
+    title: string;
+    location: string | null;
+    start_time: string;
+    end_time: string;
+  }>`select group_id, title, location, start_time, end_time from series where id = ${seriesId}`;
+  const pattern = head[0];
+  if (!pattern) return { moved: [] };
 
   // One series per member of a shared repeat, exactly as endSeriesGroup walks it.
-  const group = head[0].group_id;
-  const ids = group
+  const group = pattern.group_id;
+  const seriesIds = group
     ? (await sql<{ id: string }>`select id from series where group_id = ${group}`).map((r) => r.id)
     : [seriesId];
 
+  /*
+   * One member's occurrences supply the instants; the write then lands on
+   * everyone who is there at that instant. Walking each member's own series
+   * instead would miss anybody added to a single week — a guest has no series
+   * of their own — and strand them at the old time under the same group id,
+   * two times on one day with the agenda showing only the first.
+   */
+  const occurrences = await sql<{
+    id: string;
+    title: string;
+    location: string | null;
+    starts_at: string;
+    ends_at: string;
+  }>`
+    select id, title, location, starts_at, ends_at
+    from events
+    where series_id = ${seriesId} and created_by = 'parent' and starts_at >= ${from.toISOString()}
+    order by starts_at
+  `;
+
+  // Every member's row, indexed by instant, so the ids that moved are known
+  // without a query per week.
+  const byInstant = new Map<string, string[]>();
+  if (group) {
+    const rows = await sql<{ id: string; starts_at: string }>`
+      select id, starts_at from events
+      where group_id = ${group} and created_by = 'parent' and starts_at >= ${from.toISOString()}
+    `;
+    for (const r of rows) byInstant.set(r.starts_at, [...(byInstant.get(r.starts_at) ?? []), r.id]);
+  }
+
   const moved: { id: string; startsAt: string }[] = [];
 
-  for (const id of ids) {
-    const rows = await sql<{ title: string; location: string | null; start_time: string; end_time: string }>`
-      select title, location, start_time, end_time from series where id = ${id}
-    `;
-    const pattern = rows[0];
-    if (!pattern) continue;
+  for (const e of occurrences) {
+    const follows =
+      e.title === pattern.title &&
+      (e.location ?? null) === (pattern.location ?? null) &&
+      // Wall clock, not the instant: an occurrence keeps its local time across
+      // a daylight-saving change, so this is the comparison that holds.
+      fmtTime(e.starts_at) === pattern.start_time &&
+      fmtTime(e.ends_at) === pattern.end_time;
+    if (!follows) continue;
 
-    const events = await sql<CalEvent>`
-      select id, child_id, title, emoji, location, starts_at, ends_at, series_id, group_id, created_by, done_at
-      from events
-      where series_id = ${id} and created_by = 'parent' and starts_at >= ${from.toISOString()}
-      order by starts_at
-    `;
+    const [when] = occurrencesOn([dayKeyOf(e.starts_at)], p.startTime, p.endTime);
+    const startsAt = when.startsAt.toISOString();
+    const touched = byInstant.get(e.starts_at) ?? [e.id];
 
-    for (const e of events) {
-      const follows =
-        e.title === pattern.title &&
-        (e.location ?? null) === (pattern.location ?? null) &&
-        // Wall clock, not the instant: an occurrence keeps its local time across
-        // a daylight-saving change, so this is the comparison that holds.
-        fmtTime(e.starts_at) === pattern.start_time &&
-        fmtTime(e.ends_at) === pattern.end_time;
-      if (!follows) continue;
-
-      const [when] = occurrencesOn([dayKeyOf(e.starts_at)], p.startTime, p.endTime);
+    if (group) {
       await sql`
         update events
         set title = ${p.title}, emoji = ${p.emoji}, location = ${p.location},
-            starts_at = ${when.startsAt.toISOString()}, ends_at = ${when.endsAt.toISOString()}
+            starts_at = ${startsAt}, ends_at = ${when.endsAt.toISOString()}
+        where group_id = ${group} and starts_at = ${e.starts_at} and created_by = 'parent'
+      `;
+    } else {
+      await sql`
+        update events
+        set title = ${p.title}, emoji = ${p.emoji}, location = ${p.location},
+            starts_at = ${startsAt}, ends_at = ${when.endsAt.toISOString()}
         where id = ${e.id}
       `;
-      if (when.startsAt.getTime() !== new Date(e.starts_at).getTime()) {
-        await sql`update events set done_at = null where id = ${e.id}`;
-        moved.push({ id: e.id, startsAt: when.startsAt.toISOString() });
-      }
     }
 
-    // The pattern last, so the comparison above is made against what the
-    // occurrences were actually created from.
+    if (when.startsAt.getTime() !== new Date(e.starts_at).getTime()) {
+      for (const id of touched) {
+        await sql`update events set done_at = null where id = ${id}`;
+        moved.push({ id, startsAt });
+      }
+    }
+  }
+
+  // The patterns last, so the comparison above is made against what the
+  // occurrences were actually created from.
+  for (const id of seriesIds) {
     await sql`
       update series
       set title = ${p.title}, emoji = ${p.emoji}, location = ${p.location},
@@ -347,6 +387,155 @@ export async function updateSeriesGroup(
   }
 
   return { moved };
+}
+
+/**
+ * Who is on an activity — this occurrence, or every one still to come.
+ *
+ * Membership is read at the occurrence that was tapped, which is exactly what
+ * the pills showed, and written only where the caller asks. Forward-looking
+ * like every other write here: past weeks keep whoever was on them.
+ *
+ * Adding somebody for one week of a repeat leaves them without a series of
+ * their own, which is deliberate — they came on a Tuesday, they did not join
+ * the repeat. `updateSeriesGroup` and `endSeriesGroup` both follow the group
+ * rather than the series so that guest is neither stranded nor orphaned.
+ */
+export async function setMembers(
+  eventId: string,
+  wanted: string[],
+  scope: "one" | "series",
+  from: Date,
+): Promise<{ added: string[] }> {
+  const found = await sql<CalEvent>`
+    select id, child_id, title, emoji, location, starts_at, ends_at, series_id, group_id, created_by, done_at
+    from events where id = ${eventId} and created_by = 'parent'
+  `;
+  const ref = found[0];
+  if (!ref) return { added: [] };
+  // A guest's row has no series to spread across.
+  const wide = scope === "series" && !!ref.series_id;
+
+  /*
+   * group_id names the activity, not the occurrence, so minting one stamps
+   * every week — see lib/schema.sql. Stamping only the week being edited would
+   * leave the invariant half true, which is the shape of the bug that made
+   * "delete this event" remove a whole term.
+   */
+  let group = ref.group_id;
+  if (!group) {
+    /*
+     * The first member's own event id, rather than a fresh one. The agenda keys
+     * a collapsed row on `group_id ?? id`, so minting anything else would change
+     * that key the moment a second person joined — React would remount the row,
+     * and the edit panel inside it would lose the result of the save that had
+     * just succeeded and sit there looking like it had failed.
+     */
+    group = ref.id;
+    if (ref.series_id) {
+      await sql`update events set group_id = ${group} where series_id = ${ref.series_id}`;
+      await sql`update series set group_id = ${group} where id = ${ref.series_id}`;
+    } else {
+      await sql`update events set group_id = ${group} where id = ${ref.id}`;
+    }
+  }
+
+  const current = (
+    await sql<{ child_id: string }>`
+      select child_id from events
+      where group_id = ${group} and starts_at = ${ref.starts_at} and created_by = 'parent'
+    `
+  ).map((r) => r.child_id);
+
+  const add = wanted.filter((id) => !current.includes(id));
+  const drop = current.filter((id) => !wanted.includes(id));
+  if (!add.length && !drop.length) return { added: [] };
+
+  const since = from.toISOString();
+
+  for (const childId of drop) {
+    if (wide) {
+      await sql`
+        delete from events
+        where group_id = ${group} and child_id = ${childId} and starts_at >= ${since}
+      `;
+      // Their series stops generating; everyone else's carries on.
+      await sql`update series set active = 0 where group_id = ${group} and child_id = ${childId}`;
+    } else {
+      await sql`
+        delete from events
+        where group_id = ${group} and child_id = ${childId} and starts_at = ${ref.starts_at}
+      `;
+    }
+  }
+
+  if (!add.length) return { added: [] };
+
+  /*
+   * The occurrences are mirrored from the member already on them rather than
+   * regenerated from the pattern, so a week corrected on its own is joined at
+   * the time it actually has instead of the time the pattern says.
+   */
+  const occurrences = wide
+    ? await sql<{ title: string; emoji: string; location: string | null; starts_at: string; ends_at: string }>`
+        select title, emoji, location, starts_at, ends_at from events
+        where series_id = ${ref.series_id} and created_by = 'parent' and starts_at >= ${since}
+        order by starts_at
+      `
+    : [{ title: ref.title, emoji: ref.emoji, location: ref.location, starts_at: ref.starts_at, ends_at: ref.ends_at }];
+  if (!occurrences.length) return { added: [] };
+
+  const runway = wide
+    ? (
+        await sql<{ materialised_through: string }>`
+          select materialised_through from series where id = ${ref.series_id}
+        `
+      )[0]?.materialised_through
+    : null;
+
+  const rows: NewEvent[] = [];
+  for (const childId of add) {
+    // Somebody who guested on a few weeks keeps those rows; only the weeks they
+    // are missing from are filled in, or the insert would double them up.
+    const already = new Set(
+      (
+        await sql<{ starts_at: string }>`
+          select starts_at from events
+          where group_id = ${group} and child_id = ${childId} and starts_at >= ${since}
+        `
+      ).map((r) => r.starts_at),
+    );
+
+    const seriesId =
+      wide && runway
+        ? await createSeries({
+            child_id: childId,
+            group_id: group,
+            title: ref.title,
+            emoji: ref.emoji,
+            location: ref.location,
+            start_time: fmtTime(ref.starts_at),
+            end_time: fmtTime(ref.ends_at),
+            materialised_through: runway,
+          })
+        : null;
+
+    for (const o of occurrences) {
+      if (already.has(o.starts_at)) continue;
+      rows.push({
+        childId,
+        groupId: group,
+        title: o.title,
+        emoji: o.emoji,
+        location: o.location,
+        startsAt: new Date(o.starts_at),
+        endsAt: new Date(o.ends_at),
+        seriesId,
+      });
+    }
+  }
+
+  return { added: rows.length ? await insertEvents(rows) : [] };
 }
 
 /**
@@ -371,6 +560,12 @@ export async function endSeriesGroup(seriesId: string, from: Date): Promise<void
     ? (await sql<{ id: string }>`select id from series where group_id = ${group}`).map((r) => r.id)
     : [seriesId];
   for (const id of ids) await endSeries(id, from);
+
+  // Anyone added to a single week has no series to end, so ending them all
+  // would leave that person holding an activity nobody else is at.
+  if (group) {
+    await sql`delete from events where group_id = ${group} and starts_at >= ${from.toISOString()}`;
+  }
 }
 
 /** Kid taps an event: mark done, tap again to undo. Scoped to the child so a token can't touch siblings. */
@@ -536,11 +731,19 @@ export async function feedEvents(person: Child, start: Date, end: Date): Promise
       : await eventsInRange(person.id, start, end);
   if (person.kind !== "observer") return rows;
 
+  /*
+   * Keyed on the group *and the instant*, because group_id names the activity
+   * rather than the occurrence: a shared weekly repeat wears one group id across
+   * all fifty-two weeks. Deduping on it alone collapsed the whole term into a
+   * single entry in an observer's calendar — the same mistake that once let
+   * "delete this event" remove every week.
+   */
   const seen = new Set<string>();
   return rows.filter((e) => {
     if (!e.group_id) return true;
-    if (seen.has(e.group_id)) return false;
-    seen.add(e.group_id);
+    const key = `${e.group_id}|${e.starts_at}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

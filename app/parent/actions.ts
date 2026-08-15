@@ -20,6 +20,7 @@ import {
   insertEvents,
   renameChild,
   rotateChildToken,
+  setMembers,
   updateEventGroup,
   updateSeriesGroup,
 } from "@/lib/queries";
@@ -174,10 +175,7 @@ function announceMoved(ids: string[], title: string, emoji: string, location: st
 }
 
 /**
- * Corrects an activity already on the calendar: what, when, where.
- *
- * Not who — adding or removing a person means adding or removing rows of a
- * group, which stays delete-and-re-add.
+ * Corrects an activity already on the calendar: who, what, when, where.
  *
  * `scope` mirrors deletion's: this occurrence, or the whole repeat. A repeat
  * keeps its weekday either way. Moving one is a different operation — it would
@@ -211,8 +209,34 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
   if (!before || before.created_by !== "parent") return { error: "That activity is no longer there" };
 
   const emojiOf = emojiFor(title);
+  const scope = String(form.get("scope") ?? "one");
 
-  if (String(form.get("scope") ?? "one") === "series") {
+  /*
+   * Who is written only when the pills were actually touched, which the form
+   * says by sending `whoChanged`. Writing it unconditionally would mean tapping
+   * a week somebody had guested on, changing only the time, pressing "all
+   * weeks", and silently removing them everywhere — the panel would be applying
+   * a membership nobody had chosen.
+   */
+  if (String(form.get("whoChanged") ?? "") === "1") {
+    const members = form.getAll("childId").map(String).filter(Boolean);
+    if (!members.length) return { error: "Pick who it is for" };
+
+    const { added } = await setMembers(id, members, scope === "series" ? "series" : "one", new Date());
+
+    // Somebody added into a reminder window is in the position of a newly
+    // created activity: the next scheduler tick may land after it has started.
+    const soon: string[] = [];
+    for (const eventId of added) {
+      const ev = await eventById(eventId);
+      if (!ev) continue;
+      const mins = minutesUntil(ev.starts_at);
+      if (mins > 0 && mins <= OUTER_LEAD) soon.push(eventId);
+    }
+    if (soon.length) announceMoved(soon, title, emojiOf, location);
+  }
+
+  if (scope === "series") {
     if (!before.series_id) return { error: "That activity is not a repeat" };
     // The form disables this combination; the guard is here because the form is
     // not the boundary.

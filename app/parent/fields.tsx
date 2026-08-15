@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import type { Child } from "@/lib/db";
+import { accent } from "@/lib/colors";
 import { emojiFor } from "@/lib/emoji";
 import { shiftDay, type DayKey } from "@/lib/time";
 
@@ -18,6 +20,58 @@ export function Field({ label, children }: { label: string; children: React.Reac
       <div className="mb-2 text-[15px] font-semibold text-fg-2">{label}</div>
       {children}
     </div>
+  );
+}
+
+/**
+ * Who the activity is for. A multi-select, because several people can be on one
+ * thing — the school run is one event with a kid and the adult driving, not two.
+ *
+ * Hidden inputs rather than a controlled value: both forms post the set as
+ * repeated `childId` fields, which is what the actions read.
+ */
+export function WhoField({
+  people,
+  picked,
+  setPicked,
+}: {
+  people: Child[];
+  picked: string[];
+  setPicked: React.Dispatch<React.SetStateAction<string[]>>;
+}) {
+  return (
+    <>
+      {picked.map((id) => (
+        <input key={id} type="hidden" name="childId" value={id} />
+      ))}
+      {/* Tight on purpose. Measured at 360px — the commonest Android width —
+          this is what fits five people on two rows instead of three;
+          reclaiming card padding alone does not. Vertical padding is
+          untouched, so the target stays about 44px tall. */}
+      <div role="group" aria-label="Who" className="flex flex-wrap gap-1.5">
+        {people.map((c) => {
+          const on = picked.includes(c.id);
+          const ca = accent(c.color);
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() =>
+                setPicked((p) => (p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id]))
+              }
+              aria-pressed={on}
+              className={`flex items-center gap-1.5 rounded-2xl px-3 py-2.5 text-[17px] font-semibold transition ${
+                on ? "text-on-accent" : "bg-raised text-fg-2"
+              }`}
+              style={on ? { background: ca, color: "oklch(0.20 0.012 280)" } : undefined}
+            >
+              <span aria-hidden>{c.emoji}</span>
+              {c.name}
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

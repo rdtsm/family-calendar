@@ -2,11 +2,11 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { Child } from "@/lib/db";
-import { accent, PARENT_ACCENT } from "@/lib/colors";
+import { PARENT_ACCENT } from "@/lib/colors";
 import { QUICK_PICKS } from "@/lib/emoji";
 import { fmtDayLabel, fmtWeekdayLong, type DayKey } from "@/lib/time";
 import { addEventAction, type FormState } from "./actions";
-import { Field, TitleField, WhenFields } from "./fields";
+import { Field, TitleField, WhenFields, WhoField } from "./fields";
 
 export default function AddEvent({ children, today }: { children: Child[]; today: DayKey }) {
   const [state, action, pending] = useActionState<FormState, FormData>(addEventAction, {});
@@ -40,40 +40,11 @@ export default function AddEvent({ children, today }: { children: Child[]; today
       <h2 className="text-[15px] font-bold uppercase tracking-[0.14em] text-fg-2">New activity</h2>
 
       <form action={action} className="mt-4 space-y-5">
-        {picked.map((id) => (
-          <input key={id} type="hidden" name="childId" value={id} />
-        ))}
         <input type="hidden" name="day" value={day} />
         <input type="hidden" name="weekly" value={weekly ? "1" : "0"} />
 
         <Field label="Who">
-          {/* Tight on purpose. Measured at 360px — the commonest Android width —
-              this is what fits five people on two rows instead of three;
-              reclaiming card padding alone does not. Vertical padding is
-              untouched, so the target stays about 44px tall. */}
-          <div role="group" aria-label="Who" className="flex flex-wrap gap-1.5">
-            {children.map((c) => {
-              const on = picked.includes(c.id);
-              const ca = accent(c.color);
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() =>
-                    setPicked((p) => (p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id]))
-                  }
-                  aria-pressed={on}
-                  className={`flex items-center gap-1.5 rounded-2xl px-3 py-2.5 text-[17px] font-semibold transition ${
-                    on ? "text-on-accent" : "bg-raised text-fg-2"
-                  }`}
-                  style={on ? { background: ca, color: "oklch(0.20 0.012 280)" } : undefined}
-                >
-                  <span aria-hidden>{c.emoji}</span>
-                  {c.name}
-                </button>
-              );
-            })}
-          </div>
+          <WhoField people={children} picked={picked} setPicked={setPicked} />
         </Field>
 
         <Field label="What">
