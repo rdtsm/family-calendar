@@ -1050,7 +1050,7 @@ the row — the same unmount, arriving by a different route.
 
 ## 6. Testing
 
-125 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
+127 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
 shares a single database within a run, so a reused name silently doubles a count and the failure
 looks like a bug in the feature rather than in the fixture. It has cost time three times.
 

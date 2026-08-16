@@ -4,11 +4,15 @@ const RULES: [RegExp, string][] = [
   [/foot|soccer/i, "⚽"],
   [/basket/i, "🏀"],
   [/tennis|badminton/i, "🎾"],
+  [/volley/i, "🏐"],
   [/swim|pool/i, "🏊"],
   [/dance|ballet/i, "🩰"],
   [/gym|fitness|workout/i, "🤸"],
   [/\brun|jog|athletic|track/i, "🏃"],
   [/cycl|bike/i, "🚴"],
+  // Above the general music rule, or "drum lesson with music theory" is a piano.
+  // Bounded, so a surname like Drummond is not a drum kit.
+  [/\bdrums?\b|\bdrumming\b|percussion/i, "🥁"],
   [/piano|music|violin|guitar|choir/i, "🎹"],
   [/\bart\b|paint|draw/i, "🎨"],
   [/chess/i, "♟️"],
@@ -16,6 +20,10 @@ const RULES: [RegExp, string][] = [
   [/german|deutsch/i, "🇩🇪"],
   [/chinese|mandarin|putonghua/i, "🇨🇳"],
   [/spanish|french|english|language/i, "🗣️"],
+  // A subject, so it belongs with the languages — above the generic tuition and
+  // school rules, or "maths tuition" is a stack of books and "maths class" a
+  // satchel. Bounded on both sides so a Mathilda keeps her party.
+  [/\bmaths?\b|\bmathematic|algebra|arithmetic/i, "🧮"],
   [/brunch/i, "🥐"],
   [/tuition|tutor|study|homework|revision|exam|test/i, "📚"],
   [/school|class|lesson/i, "🎒"],

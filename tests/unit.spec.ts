@@ -123,6 +123,28 @@ test.describe("emoji inference", () => {
     expect(emojiFor("Art class")).toBe("🎨");
   });
 
+  test("a subject beats the generic rule that would otherwise catch it", () => {
+    // First match wins, so placement is the whole design: below the tuition and
+    // school rules, "Maths tuition" is 📚 and "Maths class" is 🎒.
+    expect(emojiFor("Maths")).toBe("🧮");
+    expect(emojiFor("Maths tuition")).toBe("🧮");
+    expect(emojiFor("Maths class")).toBe("🧮");
+    expect(emojiFor("Mathematics")).toBe("🧮");
+    expect(emojiFor("Algebra revision")).toBe("🧮");
+
+    expect(emojiFor("Drums")).toBe("🥁");
+    expect(emojiFor("Drum lesson")).toBe("🥁");
+    expect(emojiFor("Volleyball")).toBe("🏐");
+    expect(emojiFor("Volleyball training")).toBe("🏐");
+  });
+
+  test("the added keywords do not catch words that merely start alike", () => {
+    // "run" hid in brunch and "art" in party; both shipped wrong. These are
+    // bounded for the same reason, and a family calendar is full of names.
+    expect(emojiFor("Mathilda's party")).toBe("🎉");
+    expect(emojiFor("Drummond pickup")).toBe("🚌");
+  });
+
   test("the new lesson types are recognised in a sentence too", () => {
     expect(emojiFor("German class")).toBe("🇩🇪");
     expect(emojiFor("Chinese tuition")).toBe("🇨🇳");

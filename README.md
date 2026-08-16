@@ -61,7 +61,7 @@ cp .env.example .env.local     # PARENT_PIN and SESSION_SECRET are enough to sta
 npm run db:push                # create the tables
 npm run db:seed                # add a first child, prints their link
 npm run dev                    # http://localhost:3000/parent
-npm test                       # 125 tests against an isolated database
+npm test                       # 127 tests against an isolated database
 ```
 
 ## 1.2 Deploy to Cloudflare
