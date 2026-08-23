@@ -244,7 +244,7 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
       return { error: "A different day applies to this week only" };
     }
 
-    const { moved: movedRows } = await updateSeriesGroup(
+    const { moved: movedRows, written } = await updateSeriesGroup(
       before.series_id,
       { title, emoji: emojiOf, location, startTime: start, endTime: end },
       new Date(),
@@ -262,7 +262,11 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
 
     revalidatePath("/parent");
     revalidatePath("/k", "layout");
-    return { ok: "Saved, every week" };
+    // Nothing ahead of now — a repeat whose next occurrence has already started
+    // — leaves the pattern changed and every visible week as it was. Saying
+    // "every week" there is the message that made a working save read as a
+    // failed one.
+    return { ok: written ? "Saved, every week" : "Saved. No week ahead needed changing" };
   }
 
   // One occurrence, through the same expansion the create path uses, so the

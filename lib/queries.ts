@@ -287,7 +287,7 @@ export async function updateSeriesGroup(
   seriesId: string,
   p: SeriesPatch,
   from: Date,
-): Promise<{ moved: { id: string; startsAt: string }[] }> {
+): Promise<{ moved: { id: string; startsAt: string }[]; written: number }> {
   const head = await sql<{
     group_id: string | null;
     title: string;
@@ -296,7 +296,7 @@ export async function updateSeriesGroup(
     end_time: string;
   }>`select group_id, title, location, start_time, end_time from series where id = ${seriesId}`;
   const pattern = head[0];
-  if (!pattern) return { moved: [] };
+  if (!pattern) return { moved: [], written: 0 };
 
   // One series per member of a shared repeat, exactly as endSeriesGroup walks it.
   const group = pattern.group_id;
@@ -336,6 +336,10 @@ export async function updateSeriesGroup(
   }
 
   const moved: { id: string; startsAt: string }[] = [];
+  // How many weeks the write actually reached. Zero is a real answer — nothing
+  // ahead of now, or every week ahead corrected on its own — and the caller
+  // says so rather than claiming every week was changed.
+  let written = 0;
 
   for (const e of occurrences) {
     const follows =
@@ -366,6 +370,7 @@ export async function updateSeriesGroup(
         where id = ${e.id}
       `;
     }
+    written++;
 
     if (when.startsAt.getTime() !== new Date(e.starts_at).getTime()) {
       for (const id of touched) {
@@ -386,7 +391,7 @@ export async function updateSeriesGroup(
     `;
   }
 
-  return { moved };
+  return { moved, written };
 }
 
 /**
@@ -453,6 +458,35 @@ export async function setMembers(
 
   const since = from.toISOString();
 
+  /*
+   * The occurrences are mirrored from the member already on them rather than
+   * regenerated from the pattern, so a week corrected on its own is joined at
+   * the time it actually has instead of the time the pattern says.
+   *
+   * Read *before* the removals below, not after. The set an arriving member is
+   * mirrored from is the departing member's own rows, so dropping first emptied
+   * it: swapping the only person on a repeat deleted every week and put nobody
+   * back, and the save still reported success.
+   */
+  const occurrences = !add.length
+    ? []
+    : wide
+      ? await sql<{ title: string; emoji: string; location: string | null; starts_at: string; ends_at: string }>`
+          select title, emoji, location, starts_at, ends_at from events
+          where series_id = ${ref.series_id} and created_by = 'parent' and starts_at >= ${since}
+          order by starts_at
+        `
+      : [{ title: ref.title, emoji: ref.emoji, location: ref.location, starts_at: ref.starts_at, ends_at: ref.ends_at }];
+
+  const runway =
+    add.length && wide
+      ? (
+          await sql<{ materialised_through: string }>`
+            select materialised_through from series where id = ${ref.series_id}
+          `
+        )[0]?.materialised_through
+      : null;
+
   for (const childId of drop) {
     if (wide) {
       await sql`
@@ -469,29 +503,7 @@ export async function setMembers(
     }
   }
 
-  if (!add.length) return { added: [] };
-
-  /*
-   * The occurrences are mirrored from the member already on them rather than
-   * regenerated from the pattern, so a week corrected on its own is joined at
-   * the time it actually has instead of the time the pattern says.
-   */
-  const occurrences = wide
-    ? await sql<{ title: string; emoji: string; location: string | null; starts_at: string; ends_at: string }>`
-        select title, emoji, location, starts_at, ends_at from events
-        where series_id = ${ref.series_id} and created_by = 'parent' and starts_at >= ${since}
-        order by starts_at
-      `
-    : [{ title: ref.title, emoji: ref.emoji, location: ref.location, starts_at: ref.starts_at, ends_at: ref.ends_at }];
   if (!occurrences.length) return { added: [] };
-
-  const runway = wide
-    ? (
-        await sql<{ materialised_through: string }>`
-          select materialised_through from series where id = ${ref.series_id}
-        `
-      )[0]?.materialised_through
-    : null;
 
   const rows: NewEvent[] = [];
   for (const childId of add) {

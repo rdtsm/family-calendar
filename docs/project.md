@@ -1048,16 +1048,29 @@ for them is *the first member's own event id* rather than a fresh one. The agend
 row on `group_id ?? id`, so any other value would change that key at exactly that moment and remount
 the row — the same unmount, arriving by a different route.
 
+**A third bug, and this one destroyed data.** *Added 2026-08-23.* Swapping the only member of a
+repeat deleted every week ahead and put nobody back: `setMembers` dropped the departing member's rows
+*before* reading the very rows the arriving member is mirrored from. Reads come before removals now.
+Two things hid it — the save reported success, because the membership write and the time write are
+one save and the time write then found nothing left to move; and the panel showed nothing either way.
+Both are closed: `updateSeriesGroup` returns how many weeks it actually wrote, and a save that
+reached none says so on the agenda instead of closing on silence.
+
+**The related half was presentational.** The agenda applied the child filter *before* collapsing
+members, so a filtered row named only the chosen child — and the panel opens its pills from that
+list, which made adding somebody a silent removal of everyone the filter had hidden. Collapse first,
+filter second. Between them the two cost a live household a term of a weekly activity, restored by hand.
+
 ## 6. Testing
 
-127 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
+129 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
 shares a single database within a run, so a reused name silently doubles a count and the failure
 looks like a bug in the feature rather than in the fixture. It has cost time three times.
 
 `npm test` wipes `.data-test` and starts a dedicated server against it, so runs
 are deterministic and the development database is never touched.
 
-- `tests/unit.spec.ts` — 34 tests: timezone conversion, UTC-boundary day mapping, day windows,
+- `tests/unit.spec.ts` — 36 tests: timezone conversion, UTC-boundary day mapping, day windows,
   weekly expansion to the horizon and the forward-only top-up window, day arithmetic proven
   independent of the runtime's zone, past-midnight events, emoji inference and its fallback,
   zero-padded time formatting, countdown phrasing, grapheme handling for the kid's chosen emoji
@@ -1066,18 +1079,18 @@ are deterministic and the development database is never touched.
   folding that never splits an emoji, and escaping — and the push crypto — including a byte-for-byte
   reproduction of the RFC 8291 §5 example, which is the only real proof the encryption path is
   correct given that a wrong one is accepted with 201 Created and fails silently on the device.
-- `tests/e2e.spec.ts` — 47 tests on an emulated Pixel 7: PIN rejection, weekly creation reaching the
+- `tests/e2e.spec.ts` — 75 tests on an emulated Pixel 7: PIN rejection, weekly creation reaching the
   child's phone, single versus series delete and the past occurrences a series delete must keep,
   the three roles, participant versus observer feed contents, a shared activity appearing once,
   the PIN gate and that a share token cannot be turned into a feed token, a child's own entry
   appearing on their day and on neither the parent agenda nor an observer's feed, per-child isolation, done-state round-tripping to the
   parent's agenda, the kid's chosen emoji and colour persisting to the parent's view, one kid's
   restyling leaving their sibling untouched, empty days, unknown tokens returning 404.
-- `tests/notifications.spec.ts` — 9 tests: the reminder endpoint refuses to run without the shared
+- `tests/notifications.spec.ts` — 10 tests: the reminder endpoint refuses to run without the shared
   secret, announces an upcoming event exactly once across repeated calls, and counts a device the
   push service rejects rather than swallowing it; the subscribe route rejects malformed and
   unknown-child payloads while upserting a device by endpoint.
-- `tests/layout.spec.ts` — 6 tests at a viewport pinned to 360px, the narrowest width in common use.
+- `tests/layout.spec.ts` — 8 tests at a viewport pinned to 360px, the narrowest width in common use.
   These measure rather than assert behaviour: that a family of five fits two rows of chips, that
   nothing in the form runs past the card, that the date pill spans the row while the input inside it
   does not, that start and end are two separated fields, that a chip stays 44px tall, and that the

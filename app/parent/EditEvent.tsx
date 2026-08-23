@@ -36,7 +36,8 @@ export default function EditEvent({
   /** Who is on this occurrence, which is what the pills open showing. */
   members: string[];
   today: DayKey;
-  onDone: () => void;
+  /** Closes the panel; the saved message, when there is one, is shown by the agenda. */
+  onDone: (saved?: string) => void;
 }) {
   /*
    * The result is handled in the submit closure rather than through
@@ -80,9 +81,10 @@ export default function EditEvent({
       action={(data) =>
         startSaving(async () => {
           const result = await editEventAction({}, data);
-          // The saved row is already on screen behind the panel, so there is
-          // nothing left to read on success.
-          if (result.ok) onDone();
+          // The saved row is usually the acknowledgement. Usually — a repeat
+          // whose next occurrence has already started changes nothing visible,
+          // so the agenda says what happened rather than leaving a blank.
+          if (result.ok) onDone(result.ok);
           else setError(result.error ?? null);
         })
       }
@@ -171,7 +173,7 @@ export default function EditEvent({
 
       <button
         type="button"
-        onClick={onDone}
+        onClick={() => onDone()}
         className="w-full rounded-2xl bg-raised py-3.5 text-[17px] font-semibold text-fg-2 transition active:scale-[0.98]"
       >
         Cancel

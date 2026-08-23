@@ -30,23 +30,32 @@ export default function Agenda({ children, events, today }: { children: Child[];
   // A year is loaded, but rendering a year of weekly repeats at once is several
   // hundred rows on a phone. Revealed a chunk at a time, from data already here.
   const [weeks, setWeeks] = useState(WEEKS_STEP);
-  const stopEditing = useCallback(() => setEditing(null), []);
+  // What the last save said. A correction that reaches no week ahead is a
+  // success that changes nothing on screen, and silence there reads as failure.
+  const [saved, setSaved] = useState<string | null>(null);
+  const stopEditing = useCallback((note?: string) => {
+    setEditing(null);
+    setSaved(note ?? null);
+  }, []);
   const byId = useMemo(() => new Map(children.map((c) => [c.id, c])), [children]);
 
   const horizon = useMemo(() => shiftDay(today, weeks * 7), [today, weeks]);
   const inWindow = useMemo(() => events.filter((e) => dayKeyOf(e.startsAt) <= horizon), [events, horizon]);
   const more = inWindow.length < events.length;
 
-  const visible = filter === "all" ? inWindow : inWindow.filter((e) => e.childId === filter);
-
   /**
    * One activity with several members is stored as one row per member. Here
    * they collapse back into a single line listing everyone, so the day reads as
    * what is happening rather than as the same thing repeated.
+   *
+   * Collapsed before the filter is applied, never after. Filtering the rows
+   * first left a shared activity showing only the chosen child — and the edit
+   * panel opens its pills from exactly this list, so saving who was on it
+   * removed everyone the filter had hidden.
    */
   const grouped = useMemo(() => {
     const m = new Map<DayKey, Row[][]>();
-    for (const e of visible) {
+    for (const e of inWindow) {
       const k = dayKeyOf(e.startsAt);
       if (!m.has(k)) m.set(k, []);
       const day = m.get(k)!;
@@ -54,8 +63,14 @@ export default function Agenda({ children, events, today }: { children: Child[];
       if (mate) mate.push(e);
       else day.push([e]);
     }
-    return [...m.entries()];
-  }, [visible]);
+    if (filter === "all") return [...m.entries()];
+    const out: [DayKey, Row[][]][] = [];
+    for (const [day, activities] of m) {
+      const mine = activities.filter((g) => g.some((r) => r.childId === filter));
+      if (mine.length) out.push([day, mine]);
+    }
+    return out;
+  }, [inWindow, filter]);
 
   return (
     <section className="mt-8" aria-label="Coming up">
@@ -70,6 +85,12 @@ export default function Agenda({ children, events, today }: { children: Child[];
           </div>
         )}
       </div>
+
+      {saved && (
+        <p role="status" className="mb-3 rounded-2xl bg-card px-4 py-3 text-center text-[15px] text-fg-2">
+          {saved}
+        </p>
+      )}
 
       {grouped.length === 0 ? (
         <p className="rounded-3xl bg-card p-6 text-center text-[17px] text-fg-2">
@@ -114,7 +135,10 @@ export default function Agenda({ children, events, today }: { children: Child[];
                               width it needs on a 360px phone. */}
                           <button
                             type="button"
-                            onClick={() => setEditing(e.id)}
+                            onClick={() => {
+                              setSaved(null);
+                              setEditing(e.id);
+                            }}
                             aria-label={`Edit ${e.title}`}
                             className="flex min-w-0 flex-1 items-center gap-3 text-left"
                           >

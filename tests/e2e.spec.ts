@@ -696,6 +696,53 @@ test.describe("the mother changes who is on it", () => {
     ).toHaveCount(1);
   });
 
+  test("swapping the only member of a repeat hands it over, it does not delete it", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, { child: "Beatrix", title: "Kabaddi", ...slotAround(360), weekly: true });
+    const weeks = await agenda(page).getByText("Kabaddi").count();
+    expect(weeks).toBeGreaterThanOrEqual(5);
+
+    // The weeks an arriving member is mirrored from are the departing member's
+    // own rows. Removing her before reading them emptied the set: every week
+    // was deleted, nobody was put back, and the save still reported success.
+    await editActivity(page, "Kabaddi", { who: ["Rex"] }, { save: "Save all weeks" });
+
+    await expect(agenda(page).getByText("Kabaddi")).toHaveCount(weeks);
+    const rows = agenda(page).getByRole("listitem").filter({ hasText: "Kabaddi" });
+    await expect(rows.filter({ hasText: "Rex" })).toHaveCount(weeks);
+    await expect(rows.filter({ hasText: "Beatrix" })).toHaveCount(0);
+  });
+
+  test("a child filter does not hide the others from the row or the pills", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await ensureChild(page, "Vito");
+    await addActivity(page, {
+      children: ["Beatrix", "Rex"],
+      title: "Sepaktakraw",
+      ...slotAround(390),
+    });
+
+    await agenda(page).getByRole("button", { name: "Beatrix", exact: true }).click();
+    const row = agenda(page).getByRole("listitem").filter({ hasText: "Sepaktakraw" });
+    // Filtering used to be applied before the members were collapsed back into
+    // one line, so the row named only the chosen child — and the panel opens its
+    // pills from that same list, which made adding somebody a silent removal of
+    // everyone the filter had hidden.
+    await expect(row).toContainText("Beatrix & Rex");
+
+    await row.getByRole("button", { name: "Edit Sepaktakraw", exact: true }).click();
+    const panel = editPanel(page);
+    const rex = panel.getByRole("group", { name: "Who" }).getByRole("button", { name: "Rex", exact: true });
+    await expect(rex).toHaveAttribute("aria-pressed", "true");
+
+    await panel.getByRole("group", { name: "Who" }).getByRole("button", { name: "Vito", exact: true }).click();
+    await panel.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(panel).toBeHidden();
+
+    await agenda(page).getByRole("button", { name: "All", exact: true }).click();
+    await expect(agenda(page).getByRole("listitem").filter({ hasText: "Sepaktakraw" })).toContainText("Rex");
+  });
+
   test("the new member sees it on their own screen", async ({ page, context }) => {
     await ensureChild(page, "Juno");
     await addActivity(page, { child: "Beatrix", title: "Polo", ...todaySlot(5) });
