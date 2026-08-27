@@ -1061,9 +1061,19 @@ members, so a filtered row named only the chosen child — and the panel opens i
 list, which made adding somebody a silent removal of everyone the filter had hidden. Collapse first,
 filter second. Between them the two cost a live household a term of a weekly activity, restored by hand.
 
+**A fourth, in the same shape.** *Added 2026-08-28.* Removing somebody and correcting the time in one
+"Save all weeks" deleted their weeks and left everyone else's at the old time, while the pattern
+moved to the new one. `editEventAction` wrote the membership first, and `updateSeriesGroup` takes its
+list of weeks from the series of the row that was tapped — the rows the membership write had just
+deleted. The pattern then disagreed with every surviving occurrence, which "all weeks" reads as a
+week corrected by hand and never touches: the repeat was permanently unmovable, and each further
+attempt destroyed another member. The time is written first now. August's fix put reads above deletes
+*inside* `setMembers`; this is the same rule *between* the two calls, and an audit of the other four
+delete sites found no third instance.
+
 ## 6. Testing
 
-129 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
+130 tests, all green. **One convention worth keeping:** every test uses an activity title no other test uses. The suite
 shares a single database within a run, so a reused name silently doubles a count and the failure
 looks like a bug in the feature rather than in the fixture. It has cost time three times.
 
@@ -1079,7 +1089,7 @@ are deterministic and the development database is never touched.
   folding that never splits an emoji, and escaping — and the push crypto — including a byte-for-byte
   reproduction of the RFC 8291 §5 example, which is the only real proof the encryption path is
   correct given that a wrong one is accepted with 201 Created and fails silently on the device.
-- `tests/e2e.spec.ts` — 75 tests on an emulated Pixel 7: PIN rejection, weekly creation reaching the
+- `tests/e2e.spec.ts` — 76 tests on an emulated Pixel 7: PIN rejection, weekly creation reaching the
   child's phone, single versus series delete and the past occurrences a series delete must keep,
   the three roles, participant versus observer feed contents, a shared activity appearing once,
   the PIN gate and that a share token cannot be turned into a feed token, a child's own entry

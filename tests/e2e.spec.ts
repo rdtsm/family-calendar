@@ -783,6 +783,43 @@ test.describe("the mother corrects the whole repeat", () => {
     expect(after.filter((t) => t !== "06:40–07:40").length).toBeLessThanOrEqual(1);
   });
 
+  test("dropping a member and retiming in one save still moves everyone else's weeks", async ({ page }) => {
+    await ensureChild(page, "Rex");
+    await addActivity(page, {
+      children: ["Beatrix", "Rex"],
+      title: "Korfball",
+      ...slotAround(360),
+      weekly: true,
+    });
+    const before = await timesOf(page, "Korfball");
+    expect(before.length).toBeGreaterThanOrEqual(5);
+
+    /*
+     * Beatrix's row is the one the panel opens on, and she is the one being
+     * removed. The membership write used to run first, which deleted every week
+     * of hers — and `updateSeriesGroup` takes its list of weeks from the series
+     * of exactly that row, so it then found nothing, left Rex at the old time,
+     * and rewrote the pattern anyway. Every week of his was thereafter read as
+     * one corrected by hand, which "all weeks" never touches: no later save
+     * could undo it. The time is written first now.
+     */
+    const later = slotAround(480);
+    await editActivity(
+      page,
+      "Korfball",
+      { who: ["Rex"], start: later.start, end: later.end },
+      { save: "Save all weeks" },
+    );
+
+    const after = await timesOf(page, "Korfball");
+    expect(after.filter((t) => t === `${later.start}–${later.end}`).length).toBeGreaterThanOrEqual(
+      before.length,
+    );
+    const row = agenda(page).getByRole("listitem").filter({ hasText: "Korfball" }).first();
+    await expect(row).toContainText("Rex");
+    await expect(row).not.toContainText("Beatrix");
+  });
+
   test("a week corrected on its own keeps what it was given", async ({ page }) => {
     await addActivity(page, { child: "Beatrix", title: "Waltz", ...slotAround(120), weekly: true });
 

@@ -217,11 +217,24 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
    * a week somebody had guested on, changing only the time, pressing "all
    * weeks", and silently removing them everywhere — the panel would be applying
    * a membership nobody had chosen.
+   *
+   * Validated here, applied *after* the time is written. See `applyMembers`.
    */
-  if (String(form.get("whoChanged") ?? "") === "1") {
-    const members = form.getAll("childId").map(String).filter(Boolean);
-    if (!members.length) return { error: "Pick who it is for" };
+  const whoChanged = String(form.get("whoChanged") ?? "") === "1";
+  const members = form.getAll("childId").map(String).filter(Boolean);
+  if (whoChanged && !members.length) return { error: "Pick who it is for" };
 
+  /*
+   * The membership write comes last because it *deletes* — and the time write
+   * has to read the very rows it deletes. Removing somebody drops their weeks,
+   * and `updateSeriesGroup` takes its list of weeks from the series of the row
+   * that was tapped: drop that person first and it finds nothing, leaves every
+   * other member at the old time, and rewrites the pattern anyway. Every
+   * remaining week then reads as one corrected by hand, which "all weeks"
+   * deliberately never touches — so no later save could undo it.
+   */
+  const applyMembers = async () => {
+    if (!whoChanged) return;
     const { added } = await setMembers(id, members, scope === "series" ? "series" : "one", new Date());
 
     // Somebody added into a reminder window is in the position of a newly
@@ -234,7 +247,7 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
       if (mins > 0 && mins <= OUTER_LEAD) soon.push(eventId);
     }
     if (soon.length) announceMoved(soon, title, emojiOf, location);
-  }
+  };
 
   if (scope === "series") {
     if (!before.series_id) return { error: "That activity is not a repeat" };
@@ -259,6 +272,8 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
         .map((m) => m.id);
       if (imminent.length) announceMoved(imminent, title, emojiOf, location);
     }
+
+    await applyMembers();
 
     revalidatePath("/parent");
     revalidatePath("/k", "layout");
@@ -299,6 +314,8 @@ export async function editEventAction(_prev: FormState, form: FormData): Promise
       announceMoved(ids, title, emojiOf, location);
     }
   }
+
+  await applyMembers();
 
   revalidatePath("/parent");
   revalidatePath("/k", "layout");
